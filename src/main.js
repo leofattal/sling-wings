@@ -64,11 +64,25 @@ const popcount = s => (s & 1) + ((s >> 1) & 1) + ((s >> 2) & 1);
 
 /* ---------------- renderer ---------------- */
 const canvas = $('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-const MOBILE = window.matchMedia?.('(pointer: coarse)').matches;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MOBILE ? 1.5 : 2));
+const MOBILE = window.matchMedia?.('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !MOBILE, powerPreference: 'high-performance' });
+// graphics quality: auto adapts pixel density (and shadows) to the measured frame rate
+const store = { get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* blocked */ } } };
+let quality = store.get('sw.quality', 'auto'); // auto | high | low
+const DPR_STEPS = [2, 1.5, 1.25, 1];
+let dprStep = MOBILE ? 1 : 0;
+const AHEAD = MOBILE ? 4 : 5;
+function applyQuality() {
+  const dpr = window.devicePixelRatio || 1;
+  const step = quality === 'high' ? 0 : quality === 'low' ? 3 : dprStep;
+  renderer.setPixelRatio(Math.min(dpr, DPR_STEPS[step]));
+  const shadows = !(quality === 'low' || (quality === 'auto' && dprStep >= 3));
+  if (renderer.shadowMap.enabled !== shadows) { renderer.shadowMap.enabled = shadows; scene?.traverse(o => { if (o.material) o.material.needsUpdate = true; }); }
+  resize();
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, DPR_STEPS[dprStep]));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = quality !== 'low';
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
@@ -140,7 +154,7 @@ function loadLevel(n) {
   levelN = n;
   world?.dispose();
   LV = makeLevel(n);
-  world = buildWorld(LV, scene, lights, save.up.sling);
+  world = buildWorld(LV, scene, lights, save.up.sling, AHEAD);
   buildPlane();
   flight = null;
   aim.power = 0; aim.yaw = 0; aim.pitch = 0.25;
@@ -195,15 +209,23 @@ function updatePreview() {
   dots.instanceMatrix.needsUpdate = true;
 }
 
+function aimMeterUpdate() {
+  const m = $('aimMeter');
+  m.classList.toggle('on', phase === 'aim' && aim.power > 0.02);
+  m.textContent = `Power ${Math.round(aim.power * 100)}% · Angle ${Math.round((aim.pitch * 180) / Math.PI)}°`;
+  $('hand').classList.remove('on');
+}
 function fire() {
   setStretch(0);
+  $('aimMeter').classList.remove('on');
+  $('hand').classList.remove('on');
   if (aim.power < 0.12) { aim.power = 0; placeOnSling(); return; }
   const o = launchOrigin();
   flight = newFlight(o.x, o.y, o.z, launchSpeed(), aim.pitch, aim.yaw, st.fuel, st.bounces);
   fs = { coins: 0, gems: 0, stars: 0, fuels: 0, rings: 0, balloons: 0, nearMiss: 0, bounces: 0, birds: 0, milestones: 0, milestoneCoins: 0, crossed: false, maxAlt: 0, maxV: 0, landing: null, dist: 0, endless: LV.endless, live: 0 };
   starT = 0;
   phase = 'fly';
-  sfx.launch();
+  sfx.launch(); buzz(30);
   snapT = 0.35;
   dots.visible = false;
   trail.visible = true; trailCount = 0;
@@ -225,10 +247,12 @@ function readInput() {
   if (keys.has('KeyA') || keys.has('ArrowLeft')) s -= 1;
   if (keys.has('KeyD') || keys.has('ArrowRight')) s += 1;
   if (joy.active) { p += joy.y; s += joy.x; }
+  if (tilt.on && tilt.ok) { p += tilt.pitch; s += tilt.steer; }
   input.pitch = clamp(p, -1, 1);
   input.steer = clamp(s, -1, 1);
   input.boost = keys.has('Space') || keys.has('ShiftLeft') || boostTouch;
 }
+const buzz = ms => { try { navigator.vibrate?.(ms); } catch (e) { /* unsupported */ } };
 const panOf = x => clamp((x - flight.x) / 12, -1, 1);
 const coinValue = () => (starT > 0 ? 6 : 3);
 
@@ -268,7 +292,7 @@ function physicsStep(dt) {
         s.v = Math.min(110, s.v + 7);
         s.fuel = Math.min(st.fuel, s.fuel + 0.6);
         fs.rings++;
-        sfx.ring(panOf(r.x)); toast('RING! +speed'); shake = 0.15;
+        sfx.ring(panOf(r.x)); toast('RING! +speed'); shake = 0.15; buzz(20);
         spawnBurst(tmp.set(r.x, r.y, r.z), 0xffc83a, 16, 8);
       }
     }
@@ -286,7 +310,7 @@ function physicsStep(dt) {
       if (tmp.set(b.x, b.y, b.z).distanceTo(tmp2.set(s.x, s.y, s.z)) < b.r + 1.2) {
         b.taken = true; fs.balloons++;
         s.gamma = Math.max(s.gamma, 0.55); s.v = Math.max(s.v, 18) + 3;
-        sfx.balloon(panOf(b.x)); toast('Boing!');
+        sfx.balloon(panOf(b.x)); toast('Boing!'); buzz(25);
         spawnBurst(tmp, 0xff6b9a, 14, 7);
       }
     }
@@ -295,7 +319,7 @@ function physicsStep(dt) {
       if (f.mesh.position.distanceTo(tmp.set(s.x, s.y, s.z)) < 3.2) {
         f.hit = true; fs.birds++;
         s.v *= 0.72;
-        sfx.bird(panOf(f.mesh.position.x)); toast('Bird strike!'); shake = 0.35;
+        sfx.bird(panOf(f.mesh.position.x)); toast('Bird strike!'); shake = 0.35; buzz([30, 30, 30]);
         spawnBurst(f.mesh.position, 0xffffff, 18, 6);
       }
     }
@@ -305,7 +329,7 @@ function physicsStep(dt) {
     s.y = g + 0.6;
     if (res === 'bounce') {
       fs.bounces++;
-      sfx.bounce(); toast('Bounce! +10'); shake = 0.3;
+      sfx.bounce(); toast('Bounce! +10'); shake = 0.3; buzz(40);
       spawnBurst(plane.position, 0x9c8f7e, 10, 4);
       return;
     }
@@ -363,6 +387,7 @@ function tally(how) {
 
 function endFlight(how) {
   if (phase !== 'fly') return;
+  $('joy').classList.remove('on'); joy.active = false;
   phase = 'end';
   endT = 0;
   $('boostBtn').classList.remove('armed');
@@ -405,7 +430,7 @@ function endFlight(how) {
   endInfo = { win, how, dist: d, rows, total, prevBest, done, stars: starsNow, newStars, shown: false };
   if (how === 'perfect') { sfx.perfect(); toast('✨ PERFECT LANDING'); }
   else if (how === 'landed') { sfx.land(); toast('Touchdown'); shake = 0.2; }
-  else { sfx.crash(); shake = 0.6; toast(how === 'hit' ? 'Smack!' : 'Crash!'); spawnBurst(plane.position, 0x8a5a2b, 30, 9); }
+  else { sfx.crash(); shake = 0.6; buzz([80, 40, 120]); toast(how === 'hit' ? 'Smack!' : 'Crash!'); spawnBurst(plane.position, 0x8a5a2b, 30, 9); }
   if (done.length) setTimeout(() => sfx.mission(), 700);
   setFlightSound(0, false, false);
 }
@@ -433,6 +458,7 @@ function step(now) {
       if (aim.power <= 0.15 && aim.chargeDir < 0) { aim.power = 0.15; aim.chargeDir = 1; }
       setStretch(aim.power);
       placeOnSling();
+      aimMeterUpdate();
     }
     const ay = (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0) - (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0);
     const ap = (keys.has('ArrowUp') || keys.has('KeyW') ? 1 : 0) - (keys.has('ArrowDown') || keys.has('KeyS') ? 1 : 0);
@@ -558,7 +584,8 @@ function updateCamera(dt) {
   } else if (phase === 'aim' || phase === 'title') {
     const o = launchOrigin();
     const d = aimDir();
-    want = o.clone().add(new THREE.Vector3(d.x * -9, 3.2, 10 + aim.power * 2));
+    const portrait = window.innerHeight > window.innerWidth;
+    want = o.clone().add(new THREE.Vector3(d.x * -9, portrait ? 6.5 : 3.2, (portrait ? 15 : 10) + aim.power * (portrait ? 4 : 2)));
     look = o.clone().addScaledVector(d, 25);
     look.y = o.y - 1;
     if (phase === 'title') { want.set(Math.sin(t / 6) * 16, LV.launchH + 9, 6 + Math.cos(t / 6) * 10); look.set(0, LV.launchH, -40); }
@@ -651,6 +678,9 @@ function startLevel(n) {
   $('hSpd').textContent = '0'; $('hAlt').textContent = '0'; $('hFuel').style.width = '100%';
   $('hBounce').textContent = '🛞'.repeat(st.bounces);
   hint((MOBILE ? '👆 ' : '🖱 ') + LEVEL_TIPS[n] + (MOBILE ? '' : '  (or hold Space)'), 0);
+  $('hand').classList.toggle('on', MOBILE && save.stats.flights < 3);
+  $('aimMeter').classList.remove('on');
+  if (tilt.on) tilt.calibrate = true;
 }
 
 function showResult() {
@@ -694,7 +724,7 @@ function showShop() {
   if (flight || phase === 'end') loadLevel(levelN);
   else rebuildPreview();
   phase = 'hangar';
-  plane.position.set(0, LV.launchH + 4, 6);
+  plane.position.set(0, LV.launchH + 6, -30);
   plane.rotation.set(0, 0, 0);
   showHud(false);
   renderShop();
@@ -705,7 +735,7 @@ function rebuildPreview() {
   buildPlane();
   plane.position.copy(pos);
   world.dispose();
-  world = buildWorld(LV, scene, lights, save.up.sling);
+  world = buildWorld(LV, scene, lights, save.up.sling, AHEAD);
 }
 function renderShop() {
   $('sCoins').textContent = fmt(save.coins);
@@ -775,7 +805,7 @@ $('hMusic').onclick = $('tMusic').onclick = () => { initAudio(); toggleMusic(); 
 syncAudioBtns();
 
 /* ---------------- input ---------------- */
-const pullMax = () => Math.min(window.innerWidth, window.innerHeight) * 0.32;
+const pullMax = () => (window.innerHeight > window.innerWidth ? window.innerHeight * 0.26 : Math.min(window.innerWidth, window.innerHeight) * 0.32);
 canvas.addEventListener('pointerdown', e => {
   initAudio();
   if (phase === 'aim') {
@@ -784,6 +814,7 @@ canvas.addEventListener('pointerdown', e => {
     hint('', 0);
   } else if (phase === 'fly' && !joy.active) {
     joy.active = true; joy.id = e.pointerId; joy.sx = e.clientX; joy.sy = e.clientY; joy.x = joy.y = 0;
+    showJoy(e.clientX, e.clientY, 0, 0);
     canvas.setPointerCapture(e.pointerId);
   }
 });
@@ -797,17 +828,19 @@ canvas.addEventListener('pointermove', e => {
     aim.yaw = clamp((dx / m) * 0.45, -0.5, 0.5);
     aim.pitch = clamp(0.08 + 0.5 * clamp(dy / m, 0, 1), 0.05, 0.75);
     setStretch(aim.power);
+    aimMeterUpdate();
     if (Math.abs(aim.power - prev) > 0.06 && performance.now() - lastStretch > 70) { sfx.stretchClick(); lastStretch = performance.now(); }
     placeOnSling();
   } else if (joy.active && e.pointerId === joy.id) {
     const m = Math.min(window.innerWidth, window.innerHeight) * 0.18;
     joy.x = clamp((e.clientX - joy.sx) / m, -1, 1);
     joy.y = clamp(-(e.clientY - joy.sy) / m, -1, 1);
+    showJoy(joy.sx, joy.sy, joy.x, -joy.y);
   }
 });
 const endPointer = e => {
   if (phase === 'aim' && aim.dragging) { aim.dragging = false; fire(); }
-  if (joy.active && e.pointerId === joy.id) { joy.active = false; joy.x = joy.y = 0; }
+  if (joy.active && e.pointerId === joy.id) { joy.active = false; joy.x = joy.y = 0; $('joy').classList.remove('on'); }
 };
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
@@ -830,10 +863,84 @@ window.addEventListener('keyup', e => {
 });
 window.addEventListener('blur', () => { keys.clear(); boostTouch = false; });
 
+/* ---------------- mobile helpers ---------------- */
+function showJoy(x, y, dx, dy) {
+  const j = $('joy');
+  j.classList.add('on');
+  j.style.left = x + 'px'; j.style.top = y + 'px';
+  j.firstElementChild.style.transform = `translate(${dx * 34}px, ${dy * 34}px)`;
+}
+// Tilt steering: roll steers, pitch tilt climbs/dives, relative to how you hold the phone at launch.
+const tilt = { on: store.get('sw.tilt', '0') === '1', ok: false, steer: 0, pitch: 0, base: null, calibrate: true };
+function onOrient(e) {
+  if (e.beta == null) return;
+  tilt.ok = true;
+  const ang = (screen.orientation?.angle ?? window.orientation ?? 0) % 360;
+  let roll, nose; // roll: left/right tilt, nose: toward/away tilt
+  if (ang === 90) { roll = e.beta; nose = -e.gamma; }
+  else if (ang === 270 || ang === -90) { roll = -e.beta; nose = e.gamma; }
+  else { roll = e.gamma; nose = e.beta; }
+  if (tilt.calibrate || !tilt.base) { tilt.base = { roll, nose }; tilt.calibrate = false; }
+  const dz = (v, d) => (Math.abs(v) < d ? 0 : v - Math.sign(v) * d);
+  tilt.steer = clamp(dz(roll - tilt.base.roll, 3) / 22, -1, 1);
+  tilt.pitch = clamp(-dz(nose - tilt.base.nose, 4) / 22, -1, 1);
+}
+async function setTilt(on) {
+  if (on && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
+    try { if ((await DeviceOrientationEvent.requestPermission()) !== 'granted') on = false; } catch (e) { on = false; }
+  }
+  tilt.on = on; tilt.calibrate = true;
+  store.set('sw.tilt', on ? '1' : '0');
+  window.removeEventListener('deviceorientation', onOrient);
+  if (on) window.addEventListener('deviceorientation', onOrient);
+  syncChips();
+}
+function syncChips() {
+  $('optTilt').classList.toggle('on', tilt.on);
+  $('optTilt').style.display = MOBILE ? '' : 'none';
+  const fsOk = !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+  $('optFull').style.display = fsOk ? '' : 'none';
+  $('optFull').classList.toggle('on', !!(document.fullscreenElement || document.webkitFullscreenElement));
+  $('optQuality').textContent = `✨ Graphics: ${{ auto: 'Auto', high: 'High', low: 'Battery saver' }[quality]}`;
+}
+$('optTilt').onclick = () => { initAudio(); sfx.click(); setTilt(!tilt.on); };
+$('optFull').onclick = async () => {
+  sfx.click();
+  const d = document, el = d.documentElement;
+  try {
+    if (d.fullscreenElement || d.webkitFullscreenElement) await (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+    else await (el.requestFullscreen || el.webkitRequestFullscreen).call(el, { navigationUI: 'hide' });
+  } catch (e) { /* refused */ }
+  setTimeout(syncChips, 300);
+};
+$('optQuality').onclick = () => {
+  sfx.click();
+  quality = { auto: 'high', high: 'low', low: 'auto' }[quality];
+  store.set('sw.quality', quality);
+  if (quality === 'auto') dprStep = MOBILE ? 1 : 0;
+  applyQuality(); syncChips();
+};
+document.addEventListener('fullscreenchange', syncChips);
+if (tilt.on) setTilt(true); else syncChips();
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('visibilitychange', () => { if (document.hidden && phase === 'fly') { keys.clear(); boostTouch = false; } });
+window.addEventListener('orientationchange', () => { tilt.calibrate = true; setTimeout(resize, 250); });
+
 /* ---------------- loop + boot ---------------- */
+let fpsT = 0, fpsN = 0;
+function sampleFps(now) {
+  if (quality !== 'auto' || phase !== 'fly') { fpsT = now; fpsN = 0; return; }
+  fpsN++;
+  if (now - fpsT > 2500) {
+    const fps = (fpsN * 1000) / (now - fpsT);
+    if (fps < 42 && dprStep < 3) { dprStep++; applyQuality(); }
+    fpsT = now; fpsN = 0;
+  }
+}
 function monoFrame(now) {
   if (dxr && dxr.active) return;
   requestAnimationFrame(monoFrame);
+  sampleFps(now);
   step(now);
   renderer.render(scene, camera);
 }

@@ -218,3 +218,11 @@ export function toggleSfx() { sfxOn = !sfxOn; if (sfxBus) sfxBus.gain.value = sf
 export function toggleMusic() { musicOn = !musicOn; if (musicBus) musicBus.gain.setTargetAtTime(musicOn ? 0.32 : 0, ctx.currentTime, 0.2); try { localStorage.setItem('sw.music', musicOn ? '1' : '0'); } catch (e) { /* ignore */ } return musicOn; }
 export const isSfxOn = () => sfxOn;
 export const isMusicOn = () => musicOn;
+
+// phones: unlock on the first touch (iOS needs a touchend/click gesture) and go quiet in the background
+if (typeof document !== 'undefined') {
+  const unlock = () => { initAudio(); if (ctx && ctx.state === 'running') { document.removeEventListener('touchend', unlock); document.removeEventListener('click', unlock); } };
+  document.addEventListener('touchend', unlock, { passive: true });
+  document.addEventListener('click', unlock);
+  document.addEventListener('visibilitychange', () => { if (!ctx) return; if (document.hidden) ctx.suspend(); else ctx.resume(); });
+}

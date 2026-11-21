@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#8fd3ff" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icon-180.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Sling Wings" />
   <title>Sling Wings</title>
   <meta name="description" content="Slingshot a plane down 15 valleys, grab coins, bolt on upgrades and evolve it. Glasses-free 3D with DisplayXR." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -21,11 +27,9 @@
 
   <div id="title" class="screen">
     <div class="panel wide">
-      <div class="row top">
-        <div>
-          <div class="logo">Sling<span>Wings</span></div>
-          <div class="sub">Pull back. Let go. Fly far, land it, evolve your plane.</div>
-        </div>
+      <div class="title-top">
+        <div class="logo">Sling<span>Wings</span></div>
+        <div class="sub">Pull back. Let go. Fly far, land it, evolve your plane.</div>
         <button class="icon big" id="tMusic" title="Music">🎵</button>
       </div>
       <div class="row top">
@@ -33,12 +37,17 @@
           <div class="coins big">🪙 <b id="tCoins">0</b></div>
           <div class="coins big stars">★ <b id="tStars">0</b></div>
         </div>
-        <div class="row">
+        <div class="title-actions">
           <button class="btn ghost" id="tMissions">🎯 Missions</button>
           <button class="btn" id="tShop">🛠 Hangar</button>
         </div>
       </div>
       <div class="levels" id="levels"></div>
+      <div class="opt-row">
+        <button class="chip" id="optTilt" title="Steer by tilting your phone">📱 Tilt steering</button>
+        <button class="chip" id="optFull" title="Fullscreen">⛶ Fullscreen</button>
+        <button class="chip" id="optQuality" title="Graphics quality">✨ Graphics: Auto</button>
+      </div>
       <div class="small help">
         <b>Launch:</b> drag back on the plane and release (or hold <kbd>Space</kbd>, aim with arrows).
         <b>Fly:</b> <kbd>W</kbd>/<kbd>S</kbd> or <kbd>↑</kbd>/<kbd>↓</kbd> climb / dive · <kbd>A</kbd>/<kbd>D</kbd> steer · <kbd>Space</kbd> rocket boost.
@@ -106,10 +115,13 @@
       <div class="gauge starp" id="hStar"><small>STAR</small><b>×2</b></div>
     </div>
     <div class="hint" id="hHint"></div>
+    <div id="aimMeter"></div>
+    <div class="hand" id="hand">👆</div>
     <div class="toast" id="hToast"></div>
     <button id="boostBtn" class="touch-only">🔥</button>
   </div>
 
+  <div id="joy"><i></i></div>
   <div class="dxr-badge" id="dxrBadge" title="Open in the DisplayXR Browser on a spatial display for glasses-free 3D">2D</div>
   <script type="module" src="/src/main.js"></script>
 </body>

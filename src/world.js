@@ -3,9 +3,9 @@ import { BIOMES, CHUNK, chunkIndex } from './levels.js';
 import { place, centred } from './assets.js';
 
 // Streams the valley in CHUNK-long slices around the plane: terrain, scenery, pickups, hazards.
-const AHEAD = 5, BEHIND = 2;
+const BEHIND = 2;
 
-export function buildWorld(level, scene, lights, slingTier) {
+export function buildWorld(level, scene, lights, slingTier, AHEAD = 5) {
   const B = BIOMES[level.biome];
   const root = new THREE.Group();
   const shared = [];
