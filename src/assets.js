@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { PLANES } from './physics.js';
+import { FORMS } from './physics.js';
 
 // Planes: Sketchfab CC-BY 4.0 (see public/models/planes/README.md). Scenery: KayKit + Kenney (CC0).
 const FILES = {
@@ -12,8 +12,14 @@ const FILES = {
   tree_default: 'nature/tree_default', tree_oak: 'nature/tree_oak', tree_fat: 'nature/tree_fat',
   tree_pineDefaultA: 'nature/tree_pineDefaultA', tree_pineRoundC: 'nature/tree_pineRoundC',
   rock_tallA: 'nature/rock_tallA', rock_largeA: 'nature/rock_largeA',
+  // pickups & hazards (Poly Pizza: Poly by Google CC-BY 3.0, Quaternius CC0; Kenney CC0)
+  balloon: 'items/balloon', seagull: 'items/seagull', gascan: 'items/gascan',
+  jewel: 'coin/jewel', star: 'coin/star',
+  // bolt-on plane parts
+  p_rocket: 'parts/rocket2', p_pod: 'parts/rocket3', p_magnet: 'parts/magnet',
+  p_wheel: 'parts/wheel-default', p_wheel2: 'parts/wheel-racing',
 };
-for (const p of PLANES) FILES['plane_' + p.id] = 'planes/' + p.file;
+for (const p of FORMS) FILES['plane_' + p.id] = 'planes/' + p.file;
 
 const store = {};
 const bboxes = {};
@@ -62,7 +68,7 @@ export function place(name, size, by = 'height') {
 
 // Plane: source models are Y-up with the nose toward -X; we turn them to face -Z and centre them.
 export function planeModel(id) {
-  const p = PLANES.find(q => q.id === id) || PLANES[0];
+  const p = FORMS.find(q => q.id === id) || FORMS[0];
   const name = 'plane_' + p.id;
   const bb = bboxes[name];
   const dim = bb.getSize(new THREE.Vector3());
@@ -76,5 +82,22 @@ export function planeModel(id) {
   turn.add(inner);
   const wrap = new THREE.Group();
   wrap.add(turn);
+  wrap.updateMatrixWorld(true);
+  wrap.userData.box = new THREE.Box3().setFromObject(wrap);
   return wrap;
 }
+
+// Clone a model normalised so its longest side = size, centred on the origin.
+export function centred(name, size) {
+  const bb = bboxes[name];
+  const dim = bb.getSize(new THREE.Vector3());
+  const s = size / Math.max(dim.x, dim.y, dim.z);
+  const inner = store[name].clone(true);
+  inner.scale.setScalar(s);
+  const c = bb.getCenter(new THREE.Vector3());
+  inner.position.set(-c.x * s, -c.y * s, -c.z * s);
+  const wrap = new THREE.Group();
+  wrap.add(inner);
+  return wrap;
+}
+export const modelSize = name => bboxes[name].getSize(new THREE.Vector3());

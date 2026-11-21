@@ -14,15 +14,26 @@ Open it in the DisplayXR Browser on a spatial (light-field) display and the game
 
 ## Game systems
 
-- **Physics:** a point-mass glider model (`src/physics.js`) with lift ∝ v², induced drag, banked turns, gravity, rocket thrust, wind and updraft columns. You can trade speed for height by diving and pulling up.
-- **15 levels** (`src/levels.js`) across three biomes:
-  - Sunny Meadows: trees, then windmills.
-  - Pine Highlands: ridges with a notch to fly through, plus crosswinds.
-  - Dusk Canyons: rock pillars, towers and headwinds.
-  - Levels go from 90 m to 2250 m long.
-- **Coins:** you earn coins from distance, pickups, rings and level clears. A first-time clear pays double.
-- **Upgrades:** six upgrades with five tiers each (Slingshot, Wings, Fuel Tank, Rocket, Ailerons, Coin Magnet), plus five planes with different stats. Progress is saved in `localStorage`.
-- **Balance check:** `npm run sim` flies an autopilot through every level at every upgrade tier.
+- **Physics:** a point-mass glider model (`src/physics.js`) with lift ∝ v², induced drag, banked turns, gravity, rocket thrust, wind and updraft columns. Landing gear lets the plane bounce off the ground.
+- **15 levels plus Endless** (`src/levels.js`), from 150 m to 3.8 km, across three biomes. Each valley is generated in 120 m chunks as you fly. Crossing the finish line doesn't end the flight: you keep flying, and a smooth landing pays a bonus.
+- **Things in the valleys:** coins, gems placed high up, fuel cans, star power (double coins and a full tank), rings, hot-air balloons you bounce off, seagull flocks that slow you down, updrafts, ridges with a gap to fly through, and trees, windmills, rock pillars and towers.
+- **Earning coins:**
+  - distance, plus a bonus every 250 m
+  - pickups and rings
+  - close calls with obstacles, balloon bounces and gear bounces
+  - top speed and max height
+  - landings (perfect landings pay most)
+  - level clears (first time ×2) and 3 stars per level
+  - 24 missions
+- **Plane evolution:** 9 upgrades with 8 tiers each. Every upgrade bolts a visible part onto the plane: wing extensions and winglets, a nose cone, rocket engines (1 to 3), fuel pods, tail fins and canards, wheels, a roof magnet and a lucky star. The slingshot upgrades from wood to metal to gold. Buying enough tiers lets you **evolve** the plane through 5 airframes: Skipper → Drifter → Courier → Falcon → Jumbo.
+- **Sound:** fully procedural Web Audio:
+  - engine hum and wind gusts that follow airspeed
+  - rocket roar with crackle
+  - a slingshot creak that rises as you pull back
+  - chimes that climb in pitch as you chain coins
+  - stereo-panned pickups, plus reverb and a compressor
+  - generative background music that speeds up as you fly faster
+- **Balance check:** `npm run sim` flies an autopilot through every level at every upgrade tier and airframe.
 
 ## Develop
 
@@ -44,6 +55,18 @@ Planes are Sketchfab models under [CC BY 4.0](https://creativecommons.org/licens
 - 1990 Cessna Citation by BlenderCommunityHead
 - Boeing 787-9 by Nobilis 2
 
-Scenery: [KayKit Medieval Hexagon Pack](https://kaylousberg.com) by Kay Lousberg, and Kenney Nature Kit and Platformer Kit ([kenney.nl](https://kenney.nl)). All are CC0; licenses are in `public/licenses/`.
+Items and parts from [Poly Pizza](https://poly.pizza):
+- [Hot air balloon](https://poly.pizza/m/7Fej0Jd3_Di) by Poly by Google (CC BY 3.0). Re-tinted in game.
+- [Flying seagull](https://poly.pizza/m/6Tpj_vcWP3f) by Poly by Google (CC BY 3.0)
+- [Magnet](https://poly.pizza/m/dD2RIIea6WR) by Poly by Google (CC BY 3.0)
+- [Rocketship](https://poly.pizza/m/ah8WSBbizA6) by jeremy (CC BY 3.0)
+- [Missile](https://poly.pizza/m/1Xid2Qhqn2s) by Jarlan Perez (CC BY 3.0), used as fuel pods
+- [Gas Can](https://poly.pizza/m/eS1OXGo51c) by Quaternius (CC0)
+
+Scenery and pickups:
+- [KayKit Medieval Hexagon Pack](https://kaylousberg.com) by Kay Lousberg
+- Kenney Nature Kit, Platformer Kit (coins, gem, star) and Car Kit (wheels), from [kenney.nl](https://kenney.nl)
+
+These are all CC0; licenses are in `public/licenses/`.
 
 Glasses-free 3D: [DisplayXR](https://github.com/DisplayXR).

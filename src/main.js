@@ -1,21 +1,66 @@
 import * as THREE from 'three';
 import { loadAll, planeModel } from './assets.js';
 import { buildWorld } from './world.js';
-import { makeLevel, updraftAt, LEVEL_COUNT, LEVEL_NAMES } from './levels.js';
-import { makeStats, newFlight, stepFlight, UPGRADES, PLANES, MAX_TIER } from './physics.js';
-import { initAudio, setFlightSound, sfx, toggleMute, isMuted } from './audio.js';
+import { buildParts } from './parts.js';
+import { makeLevel, updraftAt, chunkIndex, CHUNK, LEVEL_COUNT, LEVEL_NAMES, LEVEL_TIPS, ENDLESS, ENDLESS_UNLOCK, levelLength } from './levels.js';
+import { makeStats, newFlight, stepFlight, touchdown, UPGRADES, FORMS, MAX_TIER, TOTAL_TIERS } from './physics.js';
+import { initAudio, setFlightSound, setStretch, setMusicIntensity, sfx, toggleSfx, toggleMusic, isSfxOn, isMusicOn } from './audio.js';
 import { startDisplayXR } from './displayxr.js';
 import './style.css';
 
 const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const DEBUG = location.search.includes('debug');
+const ALL = LEVEL_COUNT + 1; // 15 levels + endless
 
 /* ---------------- save ---------------- */
-const SAVE_KEY = 'slingwings.v1';
-const save = { coins: 0, up: Object.fromEntries(UPGRADES.map(u => [u.id, 0])), planes: ['c172'], plane: 'c172', cleared: 0, best: Array(LEVEL_COUNT).fill(0) };
-try { const s = JSON.parse(localStorage.getItem(SAVE_KEY)); if (s) Object.assign(save, s, { up: { ...save.up, ...s.up } }); } catch (e) { /* fresh save */ }
-const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage blocked: progress lasts this session */ } };
+const SAVE_KEY = 'slingwings.v2';
+const save = {
+  coins: 0, up: Object.fromEntries(UPGRADES.map(u => [u.id, 0])), form: 'c172', forms: ['c172'],
+  cleared: 0, best: Array(ALL).fill(0), stars: Array(LEVEL_COUNT).fill(0), missions: [],
+  stats: { flights: 0, totalDist: 0, bestSpeed: 0, bestAlt: 0, earned: 0, perfect: 0 },
+};
+try {
+  const s = JSON.parse(localStorage.getItem(SAVE_KEY));
+  if (s) Object.assign(save, s, { up: { ...save.up, ...s.up }, stats: { ...save.stats, ...s.stats } });
+  else {
+    const v1 = JSON.parse(localStorage.getItem('slingwings.v1'));
+    if (v1) { save.coins = v1.coins || 0; save.cleared = v1.cleared || 0; Object.assign(save.up, v1.up || {}); (v1.best || []).forEach((b, i) => (save.best[i] = b)); }
+  }
+} catch (e) { /* fresh save */ }
+while (save.best.length < ALL) save.best.push(0);
+const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage blocked */ } };
+const tiersBought = () => UPGRADES.reduce((a, u) => a + save.up[u.id], 0);
+const formOf = id => FORMS.find(f => f.id === id) || FORMS[0];
+
+/* ---------------- missions ---------------- */
+const MISSIONS = [
+  { id: 'd500', text: 'Fly 500 m in one flight', reward: 80, test: f => f.dist >= 500 },
+  { id: 'd1500', text: 'Fly 1,500 m in one flight', reward: 250, test: f => f.dist >= 1500 },
+  { id: 'd3000', text: 'Fly 3,000 m in one flight', reward: 700, test: f => f.dist >= 3000 },
+  { id: 'd5000', text: 'Fly 5,000 m in one flight', reward: 1500, test: f => f.dist >= 5000 },
+  { id: 'v150', text: 'Hit 150 km/h', reward: 120, test: f => f.maxV * 3.6 >= 150 },
+  { id: 'v250', text: 'Hit 250 km/h', reward: 450, test: f => f.maxV * 3.6 >= 250 },
+  { id: 'a50', text: 'Climb 50 m above the ground', reward: 120, test: f => f.maxAlt >= 50 },
+  { id: 'a100', text: 'Climb 100 m above the ground', reward: 400, test: f => f.maxAlt >= 100 },
+  { id: 'c50', text: 'Grab 50 coins in one flight', reward: 200, test: f => f.coins >= 50 },
+  { id: 'c150', text: 'Grab 150 coins in one flight', reward: 600, test: f => f.coins >= 150 },
+  { id: 'r10', text: 'Fly through 10 rings in one flight', reward: 300, test: f => f.rings >= 10 },
+  { id: 'perfect', text: 'Make a perfect landing', reward: 100, test: f => f.landing === 'perfect' },
+  { id: 'b3', text: 'Bounce 3 times in one flight', reward: 250, test: f => f.bounces >= 3 },
+  { id: 'nm5', text: '5 close calls in one flight', reward: 250, test: f => f.nearMiss >= 5 },
+  { id: 'bl5', text: 'Bounce off 5 balloons in one flight', reward: 250, test: f => f.balloons >= 5 },
+  { id: 'g5', text: 'Collect 5 gems in one flight', reward: 300, test: f => f.gems >= 5 },
+  { id: 'evo2', text: 'Evolve into the Courier', reward: 400, test: () => save.forms.includes('citation2') },
+  { id: 'evo4', text: 'Evolve into the Jumbo', reward: 2000, test: () => save.forms.includes('b789') },
+  { id: 'lv5', text: 'Clear level 5', reward: 250, test: () => save.cleared >= 5 },
+  { id: 'lv10', text: 'Clear level 10', reward: 800, test: () => save.cleared >= 10 },
+  { id: 'lv15', text: 'Clear all 15 levels', reward: 2500, test: () => save.cleared >= 15 },
+  { id: 'stars', text: 'Earn 30 stars', reward: 1000, test: () => save.stars.reduce((a, s) => a + popcount(s), 0) >= 30 },
+  { id: 'endless', text: 'Endless: fly 3,000 m', reward: 900, test: f => f.endless && f.dist >= 3000 },
+  { id: 'total', text: 'Fly 25 km in total', reward: 1200, test: () => save.stats.totalDist >= 25000 },
+];
+const popcount = s => (s & 1) + ((s >> 1) & 1) + ((s >> 2) & 1);
 
 /* ---------------- renderer ---------------- */
 const canvas = $('c');
@@ -48,23 +93,21 @@ window.addEventListener('resize', resize);
 resize();
 
 /* ---------------- game state ---------------- */
-let phase = 'loading'; // loading | title | aim | fly | end
-let levelN = 0, LV = null, world = null, plane = null, planeId = null, st = null, flight = null;
-let earned = { coins: 0, rings: 0 }, endInfo = null, endT = 0;
+let phase = 'loading'; // loading | title | hangar | aim | fly | end
+let levelN = 0, LV = null, world = null, plane = null, parts = null, st = null, flight = null;
+let fs = null, endInfo = null, endT = 0, starT = 0;
 const aim = { power: 0, yaw: 0, pitch: 0.25, dragging: false, sx: 0, sy: 0, keyCharge: false, chargeDir: 1 };
 const input = { pitch: 0, steer: 0, boost: false };
 const keys = new Set();
 const joy = { active: false, id: -1, sx: 0, sy: 0, x: 0, y: 0 };
 let boostTouch = false;
 
-// trajectory preview dots
 const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }), 36);
 dots.frustumCulled = false;
 scene.add(dots);
 
-// boost flame + contrail
-const flame = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.8, 10), new THREE.MeshBasicMaterial({ color: 0xffa23a, transparent: true, opacity: 0.9 }));
-flame.rotation.x = -Math.PI / 2;
+const baseFlame = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.8, 10), new THREE.MeshBasicMaterial({ color: 0xffa23a, transparent: true, opacity: 0.9 }));
+baseFlame.rotation.x = -Math.PI / 2;
 const TRAIL_N = 90;
 const trailGeo = new THREE.BufferGeometry();
 trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N * 3), 3));
@@ -73,55 +116,68 @@ trail.frustumCulled = false;
 scene.add(trail);
 let trailCount = 0, trailTick = 0;
 
-/* ---------------- level setup ---------------- */
+// burst particles (coins, crashes, balloons)
+const BURST_N = 160;
+const burst = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.18), new THREE.MeshBasicMaterial({ color: 0xffffff }), BURST_N);
+burst.frustumCulled = false;
+burst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BURST_N * 3), 3);
+scene.add(burst);
+const parts3 = Array.from({ length: BURST_N }, () => ({ life: 0, p: new THREE.Vector3(), v: new THREE.Vector3() }));
+let burstI = 0;
+function spawnBurst(pos, color, n = 12, speed = 6) {
+  const c = new THREE.Color(color);
+  for (let i = 0; i < n; i++) {
+    const q = parts3[burstI]; burst.setColorAt(burstI, c);
+    q.life = 0.6 + Math.random() * 0.4; q.p.copy(pos);
+    q.v.set(Math.random() - 0.5, Math.random() - 0.2, Math.random() - 0.5).normalize().multiplyScalar(speed * (0.5 + Math.random()));
+    burstI = (burstI + 1) % BURST_N;
+  }
+  burst.instanceColor.needsUpdate = true;
+}
+
+/* ---------------- level & plane setup ---------------- */
 function loadLevel(n) {
   levelN = n;
   world?.dispose();
   LV = makeLevel(n);
-  world = buildWorld(LV, scene, lights);
-  setPlane(save.plane);
-  st = makeStats(save.up, save.plane);
+  world = buildWorld(LV, scene, lights, save.up.sling);
+  buildPlane();
   flight = null;
   aim.power = 0; aim.yaw = 0; aim.pitch = 0.25;
   placeOnSling();
   trailCount = 0; trail.visible = false;
-  $('hLvl').textContent = `${n + 1} · ${LV.name}`;
-  $('hBest').style.left = `${clamp(save.best[n] / LV.length, 0, 1) * 100}%`;
-  $('hWindBox').style.display = LV.wind.x || LV.wind.z ? '' : 'none';
-  const w = LV.wind;
-  $('hWind').textContent = (w.x > 0 ? '→' : w.x < 0 ? '←' : '') + (w.z > 0 ? '↓' : '') + ' ' + Math.round(Math.hypot(w.x, w.z) * 3.6);
 }
 
-function setPlane(id) {
-  if (plane && planeId === id) return;
+function buildPlane() {
   if (plane) scene.remove(plane);
-  plane = planeModel(id);
-  planeId = id;
+  plane = planeModel(save.form);
   plane.rotation.order = 'YXZ';
   plane.traverse(o => { if (o.isMesh) o.castShadow = true; });
-  flame.position.set(0, 0, (PLANES.find(p => p.id === id)?.len || 3.2) * 0.5 + 0.8);
-  plane.add(flame);
-  flame.visible = false;
+  parts = buildParts(save.form, save.up, plane.userData.box);
+  plane.add(parts.group);
+  if (!parts.flames.length) {
+    baseFlame.position.set(0, 0, plane.userData.box.max.z + 0.8);
+    plane.add(baseFlame);
+    parts.flames.push(baseFlame);
+  }
+  parts.flames.forEach(f => (f.visible = false));
   scene.add(plane);
+  st = makeStats(save.up, save.form);
 }
 
 const launchOrigin = () => new THREE.Vector3(0, LV.launchH + 5.0, 0.6);
-function aimDir() {
-  return new THREE.Vector3(-Math.sin(aim.yaw) * Math.cos(aim.pitch), Math.sin(aim.pitch), -Math.cos(aim.yaw) * Math.cos(aim.pitch));
-}
+const aimDir = () => new THREE.Vector3(-Math.sin(aim.yaw) * Math.cos(aim.pitch), Math.sin(aim.pitch), -Math.cos(aim.yaw) * Math.cos(aim.pitch));
 function placeOnSling() {
   const d = aimDir();
-  const pull = aim.power * 3.2;
-  const p = launchOrigin().addScaledVector(d, -pull);
+  const p = launchOrigin().addScaledVector(d, -aim.power * 3.2);
   plane.position.copy(p);
   plane.rotation.set(aim.pitch, aim.yaw, 0);
   const local = p.clone().sub(world.sling.group.position);
-  local.addScaledVector(d, -(PLANES.find(q => q.id === planeId).len * 0.45));
+  local.addScaledVector(d, -(plane.userData.box.max.z * 0.9));
   world.sling.setPouch(local);
   updatePreview();
 }
-
-function launchSpeed() { return st.launch * (0.35 + 0.65 * aim.power); }
+const launchSpeed = () => st.launch * (0.35 + 0.65 * aim.power);
 function updatePreview() {
   const show = phase === 'aim' && aim.power > 0.08;
   dots.visible = show;
@@ -132,7 +188,7 @@ function updatePreview() {
   const m = new THREE.Matrix4();
   for (let i = 0; i < dots.count; i++) {
     for (let k = 0; k < 8; k++) stepFlight(s, { pitch: 0, steer: 0, boost: false }, st, 1 / 60, env);
-    const sc = 1 - i / dots.count * 0.6;
+    const sc = 1 - (i / dots.count) * 0.6;
     m.makeScale(sc, sc, sc).setPosition(s.x, s.y, s.z);
     dots.setMatrixAt(i, m);
   }
@@ -140,10 +196,12 @@ function updatePreview() {
 }
 
 function fire() {
+  setStretch(0);
   if (aim.power < 0.12) { aim.power = 0; placeOnSling(); return; }
   const o = launchOrigin();
-  flight = newFlight(o.x, o.y, o.z, launchSpeed(), aim.pitch, aim.yaw, st.fuel);
-  earned = { coins: 0, rings: 0 };
+  flight = newFlight(o.x, o.y, o.z, launchSpeed(), aim.pitch, aim.yaw, st.fuel, st.bounces);
+  fs = { coins: 0, gems: 0, stars: 0, fuels: 0, rings: 0, balloons: 0, nearMiss: 0, bounces: 0, birds: 0, milestones: 0, milestoneCoins: 0, crossed: false, maxAlt: 0, maxV: 0, landing: null, dist: 0, endless: LV.endless, live: 0 };
+  starT = 0;
   phase = 'fly';
   sfx.launch();
   snapT = 0.35;
@@ -157,7 +215,7 @@ let snapT = 0;
 /* ---------------- flight step ---------------- */
 const FIXED = 1 / 120;
 let acc = 0, last = performance.now();
-const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3();
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3(), tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
 let shake = 0;
 
 function readInput() {
@@ -171,37 +229,95 @@ function readInput() {
   input.steer = clamp(s, -1, 1);
   input.boost = keys.has('Space') || keys.has('ShiftLeft') || boostTouch;
 }
+const panOf = x => clamp((x - flight.x) / 12, -1, 1);
+const coinValue = () => (starT > 0 ? 6 : 3);
 
 function physicsStep(dt) {
   const s = flight;
   const pz = s.z;
   stepFlight(s, input, st, dt, { wind: LV.wind, updraft: (x, y, z) => updraftAt(LV, x, y, z) });
-  // rings
-  for (const r of world.rings) {
-    if (r.taken) continue;
-    if (pz > r.z && s.z <= r.z && Math.hypot(s.x - r.x, s.y - r.y) < r.r + 0.3) {
-      r.taken = true; r.mesh.material = r.doneMat;
-      s.v = Math.min(95, s.v + 7);
-      s.fuel = Math.min(st.fuel, s.fuel + 0.6);
-      earned.rings++;
-      sfx.ring(); toast('RING! +speed'); shake = 0.15;
+  const g = LV.ground(s.x, s.z);
+  fs.maxAlt = Math.max(fs.maxAlt, s.y - g);
+  fs.maxV = Math.max(fs.maxV, s.v);
+  if (starT > 0) starT -= dt;
+
+  // distance milestones every 250 m
+  const ms = Math.floor(-s.z / 250);
+  if (ms > fs.milestones) {
+    fs.milestones = ms;
+    const bonus = 10 + 2 * ms;
+    fs.milestoneCoins += bonus;
+    sfx.milestone();
+    toast(`${ms * 250} m!  +${bonus}`);
+  }
+  // finish line (flight continues: keep going for distance + a landing bonus)
+  if (!fs.crossed && -s.z >= LV.length) {
+    fs.crossed = true;
+    sfx.finish();
+    toast('🏁 FINISH! Keep flying, then land it!');
+    spawnBurst(plane.position, 0xffcf33, 30, 10);
+  }
+
+  const k = chunkIndex(s.z);
+  for (let j = Math.max(0, k - 1); j <= k + 1; j++) {
+    const c = LV.chunk(j);
+    for (const r of c.rings) {
+      if (r.taken) continue;
+      if (pz > r.z && s.z <= r.z && Math.hypot(s.x - r.x, s.y - r.y) < r.r + 0.3) {
+        r.taken = true; if (r.mesh) r.mesh.material = r.doneMat;
+        s.v = Math.min(110, s.v + 7);
+        s.fuel = Math.min(st.fuel, s.fuel + 0.6);
+        fs.rings++;
+        sfx.ring(panOf(r.x)); toast('RING! +speed'); shake = 0.15;
+        spawnBurst(tmp.set(r.x, r.y, r.z), 0xffc83a, 16, 8);
+      }
+    }
+    for (const o of c.obstacles) {
+      const d = Math.hypot(o.x - s.x, o.z - s.z);
+      const top = LV.ground(o.x, o.z) + o.h * 0.92;
+      if (d < o.r + 0.6 && s.y < top) return endFlight('hit');
+      if (!o.near && pz > o.z && s.z <= o.z && d < o.r + 3.5 && s.y < top + 2) {
+        o.near = true; fs.nearMiss++;
+        sfx.nearMiss(panOf(o.x)); toast('Close call! +8');
+      }
+    }
+    for (const b of c.balloons) {
+      if (b.taken) continue;
+      if (tmp.set(b.x, b.y, b.z).distanceTo(tmp2.set(s.x, s.y, s.z)) < b.r + 1.2) {
+        b.taken = true; fs.balloons++;
+        s.gamma = Math.max(s.gamma, 0.55); s.v = Math.max(s.v, 18) + 3;
+        sfx.balloon(panOf(b.x)); toast('Boing!');
+        spawnBurst(tmp, 0xff6b9a, 14, 7);
+      }
+    }
+    for (const f of c.birds) {
+      if (f.hit || !f.mesh) continue;
+      if (f.mesh.position.distanceTo(tmp.set(s.x, s.y, s.z)) < 3.2) {
+        f.hit = true; fs.birds++;
+        s.v *= 0.72;
+        sfx.bird(panOf(f.mesh.position.x)); toast('Bird strike!'); shake = 0.35;
+        spawnBurst(f.mesh.position, 0xffffff, 18, 6);
+      }
     }
   }
-  // finish
-  if (s.z <= -LV.length) return endFlight(true, 'finish');
-  // ground / obstacles
-  const g = LV.ground(s.x, s.z);
-  if (s.y < g + 0.55) return endFlight(false, s.gamma > -0.3 && s.v < 26 ? 'landed' : 'crash');
-  for (const o of LV.obstacles) {
-    if (Math.abs(o.z - s.z) < o.r + 1 && Math.hypot(o.x - s.x, o.z - s.z) < o.r + 0.6 && s.y < LV.ground(o.x, o.z) + o.h * 0.92) return endFlight(false, 'hit');
+  if (s.y < g + 0.55) {
+    const res = touchdown(s, st);
+    s.y = g + 0.6;
+    if (res === 'bounce') {
+      fs.bounces++;
+      sfx.bounce(); toast('Bounce! +10'); shake = 0.3;
+      spawnBurst(plane.position, 0x9c8f7e, 10, 4);
+      return;
+    }
+    return endFlight(res);
   }
-  if (s.t > 300) return endFlight(false, 'landed');
+  if (s.t > 600) endFlight('landed');
 }
 
-function stepCoins(dt) {
+function stepPickups(dt) {
   const p = plane.position;
-  const r2 = st.magnet * st.magnet;
-  for (const c of world.coins) {
+  const mag = st.magnet * (starT > 0 ? 2.5 : 1);
+  for (const c of world.live.coins) {
     if (c.taken) continue;
     const m = c.mesh;
     m.rotation.y += dt * 3;
@@ -209,42 +325,98 @@ function stepCoins(dt) {
     const dz = m.position.z - p.z;
     if (dz > 8 || dz < -60) continue;
     const d2 = m.position.distanceToSquared(p);
-    if (d2 < r2 || c.pull > 0) {
+    if (d2 < mag * mag || c.pull > 0) {
       c.pull = Math.min(1, c.pull + dt * 4);
       m.position.lerp(p, Math.min(1, dt * (6 + 18 * c.pull)));
     }
-    if (m.position.distanceToSquared(p) < 2.6) {
-      c.taken = true; m.visible = false; earned.coins++;
-      sfx.coin();
-      $('hCoins').textContent = earned.coins;
+    if (m.position.distanceToSquared(p) < 2.8) {
+      c.taken = true; m.visible = false;
+      const pan = panOf(m.position.x);
+      if (c.kind === 'gem') { fs.gems++; sfx.gem(pan); toast('💎 Gem! +15'); spawnBurst(m.position, 0x7fb4ff, 14, 6); }
+      else if (c.kind === 'fuel') { fs.fuels++; flight.fuel = Math.min(st.fuel, flight.fuel + st.fuel * 0.4); sfx.fuel(pan); toast('⛽ Fuel!'); }
+      else if (c.kind === 'star') { fs.stars++; starT = 8; flight.fuel = st.fuel; sfx.star(); toast('⭐ STAR POWER! Double coins'); spawnBurst(m.position, 0xffe27a, 24, 9); }
+      else { fs.coins++; fs.live += coinValue(); sfx.coin(pan); spawnBurst(m.position, 0xffd34a, 5, 3); }
     }
   }
 }
 
-function endFlight(win, how) {
+function tally(how) {
+  const d = Math.max(0, Math.round(-flight.z));
+  fs.dist = d; fs.landing = how;
+  const rows = [];
+  const add = (label, v) => { if (v > 0) rows.push([label, Math.round(v)]); };
+  add(`Distance ${d} m`, d / 4);
+  add(`Milestones × ${fs.milestones}`, fs.milestoneCoins);
+  add(`Coins × ${fs.coins}`, fs.live);
+  add(`Gems × ${fs.gems}`, fs.gems * 15);
+  add(`Rings × ${fs.rings}`, fs.rings * 6);
+  add(`Balloons × ${fs.balloons}`, fs.balloons * 4);
+  add(`Close calls × ${fs.nearMiss}`, fs.nearMiss * 8);
+  add(`Bounces × ${fs.bounces}`, fs.bounces * 10);
+  add(`Top speed ${Math.round(fs.maxV * 3.6)} km/h`, (fs.maxV * 3.6) / 10);
+  add(`Max height ${Math.round(fs.maxAlt)} m`, fs.maxAlt / 3);
+  const lb = (fs.crossed ? 1.5 : 1);
+  if (how === 'perfect') add(fs.crossed ? 'Perfect landing past the finish' : 'Perfect landing', (30 + 4 * levelN) * lb);
+  else if (how === 'landed') add('Safe landing', 10 * lb);
+  return { d, rows };
+}
+
+function endFlight(how) {
   if (phase !== 'fly') return;
   phase = 'end';
   endT = 0;
   $('boostBtn').classList.remove('armed');
-  const dist = win ? LV.length : Math.max(0, Math.round(-flight.z));
+  setMusicIntensity(0);
+  const { d, rows } = tally(how);
+  const win = fs.crossed;
   const prevBest = save.best[levelN];
-  save.best[levelN] = Math.max(prevBest, dist);
-  const firstClear = win && save.cleared <= levelN;
-  const rows = [];
-  rows.push(['Distance ' + dist + ' m', Math.floor(dist / 4)]);
-  if (earned.coins) rows.push([`Coins × ${earned.coins}`, earned.coins * 3]);
-  if (earned.rings) rows.push([`Rings × ${earned.rings}`, earned.rings * 6]);
-  if (win) rows.push([firstClear ? 'Level clear (first time ×2)' : 'Level clear', (40 + 25 * levelN) * (firstClear ? 2 : 1)]);
-  if (dist > prevBest && prevBest > 0 && !win) rows.push(['New best!', 15]);
+  save.best[levelN] = Math.max(prevBest, d);
   let total = rows.reduce((a, r) => a + r[1], 0);
+  const firstClear = win && !LV.endless && save.cleared <= levelN;
+  if (win && !LV.endless) rows.push([firstClear ? 'Level clear (first time ×2)' : 'Level clear', (40 + 25 * levelN) * (firstClear ? 2 : 1)]);
+  if (d > prevBest && prevBest > 0) rows.push(['New personal best!', 20]);
+  // stars
+  let newStars = 0, starsNow = 0;
+  if (!LV.endless) {
+    const prev = save.stars[levelN];
+    let s = prev;
+    if (win) s |= 1;
+    if (fs.coins >= Math.ceil(levelCoinCount(levelN) * 0.5)) s |= 2;
+    if (win && how === 'perfect') s |= 4;
+    newStars = popcount(s) - popcount(prev);
+    save.stars[levelN] = s; starsNow = s;
+    if (newStars) rows.push([`New stars × ${newStars}`, newStars * 50]);
+  }
+  total = rows.reduce((a, r) => a + r[1], 0);
   const mul = st.coinMul;
-  if (mul > 1) { const bonus = Math.round(total * (mul - 1)); rows.push([`${PLANES.find(p => p.id === save.plane).name} bonus`, bonus]); total += bonus; }
-  save.coins += total;
-  if (win) save.cleared = Math.max(save.cleared, levelN + 1);
+  if (mul > 1.001) { const bonus = Math.round(total * (mul - 1)); rows.push([`${formOf(save.form).name} & charm bonus ×${mul.toFixed(2)}`, bonus]); total += bonus; }
+  if (win && !LV.endless) save.cleared = Math.max(save.cleared, levelN + 1);
+  save.stats.flights++; save.stats.totalDist += d;
+  save.stats.bestSpeed = Math.max(save.stats.bestSpeed, Math.round(fs.maxV * 3.6));
+  save.stats.bestAlt = Math.max(save.stats.bestAlt, Math.round(fs.maxAlt));
+  if (how === 'perfect') save.stats.perfect++;
+  // missions
+  const done = [];
+  for (const m of MISSIONS) if (!save.missions.includes(m.id) && m.test(fs)) { save.missions.push(m.id); done.push(m); }
+  const missionCoins = done.reduce((a, m) => a + m.reward, 0);
+  total += missionCoins;
+  save.coins += total; save.stats.earned += total;
   persist();
-  endInfo = { win, how, dist, rows, total, prevBest };
-  if (win) { sfx.win(); toast('FINISH!'); } else { sfx.crash(); shake = how === 'landed' ? 0.2 : 0.6; toast(how === 'landed' ? 'Touchdown' : 'Crash!'); }
+  endInfo = { win, how, dist: d, rows, total, prevBest, done, stars: starsNow, newStars, shown: false };
+  if (how === 'perfect') { sfx.perfect(); toast('✨ PERFECT LANDING'); }
+  else if (how === 'landed') { sfx.land(); toast('Touchdown'); shake = 0.2; }
+  else { sfx.crash(); shake = 0.6; toast(how === 'hit' ? 'Smack!' : 'Crash!'); spawnBurst(plane.position, 0x8a5a2b, 30, 9); }
+  if (done.length) setTimeout(() => sfx.mission(), 700);
   setFlightSound(0, false, false);
+}
+
+const coinCountCache = {};
+function levelCoinCount(n) {
+  if (coinCountCache[n] != null) return coinCountCache[n];
+  const lv = makeLevel(n);
+  let c = 0;
+  for (let k = 0; k * CHUNK < lv.length; k++) c += lv.chunk(k).coins.filter(q => q.z >= -lv.length).length;
+  return (coinCountCache[n] = c);
 }
 
 /* ---------------- per-frame update ---------------- */
@@ -254,13 +426,14 @@ function step(now) {
   last = now;
   if (phase === 'loading') return;
 
-  if (phase === 'aim' && aim.keyCharge) {
-    aim.power += aim.chargeDir * dt * 0.9;
-    if (aim.power >= 1) { aim.power = 1; aim.chargeDir = -1; }
-    if (aim.power <= 0.15 && aim.chargeDir < 0) { aim.power = 0.15; aim.chargeDir = 1; }
-    placeOnSling();
-  }
   if (phase === 'aim') {
+    if (aim.keyCharge) {
+      aim.power += aim.chargeDir * dt * 0.9;
+      if (aim.power >= 1) { aim.power = 1; aim.chargeDir = -1; }
+      if (aim.power <= 0.15 && aim.chargeDir < 0) { aim.power = 0.15; aim.chargeDir = 1; }
+      setStretch(aim.power);
+      placeOnSling();
+    }
     const ay = (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0) - (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0);
     const ap = (keys.has('ArrowUp') || keys.has('KeyW') ? 1 : 0) - (keys.has('ArrowDown') || keys.has('KeyS') ? 1 : 0);
     if (ay || ap) { aim.yaw = clamp(aim.yaw + ay * dt * 0.6, -0.5, 0.5); aim.pitch = clamp(aim.pitch + ap * dt * 0.5, 0.05, 0.75); placeOnSling(); }
@@ -273,32 +446,25 @@ function step(now) {
     if (flight) {
       plane.position.set(flight.x, flight.y, flight.z);
       plane.rotation.set(flight.gamma, flight.psi, flight.bank * 1.1);
-      flame.visible = flight.boosting;
-      if (flight.boosting) flame.scale.set(1, 0.8 + Math.random() * 0.5, 1);
-      setFlightSound(flight.v, flight.boosting, true);
+      for (const f of parts.flames) { f.visible = flight.boosting; if (f.visible) f.scale.z = f.scale.x * (0.8 + Math.random() * 0.5); }
+      setFlightSound(flight.v, flight.boosting, true, save.form === 'c172' || save.form === 'mq9');
+      setMusicIntensity(clamp((flight.v - 12) / 30, 0, 1));
+      world.update(flight.z);
     }
   }
   if (phase === 'end' && flight) {
     endT += dt;
-    // tumble / skid to a stop
     flight.v *= Math.exp(-dt * 3);
     const g = LV.ground(plane.position.x, plane.position.z);
     tmp.set(-Math.sin(flight.psi), 0, -Math.cos(flight.psi)).multiplyScalar(flight.v * dt);
-    if (endInfo && !endInfo.win) {
-      plane.position.add(tmp);
-      plane.position.y = Math.max(g + 0.5, plane.position.y - dt * 8);
-      if (endInfo.how !== 'landed') { plane.rotation.z += dt * flight.v * 0.15; plane.rotation.x *= 0.95; }
-      else plane.rotation.x *= 0.9;
-    } else {
-      flight.z -= 20 * dt; flight.y += 4 * dt;
-      plane.position.set(flight.x, flight.y, flight.z);
-      plane.rotation.x = 0.2; plane.rotation.z = Math.sin(endT * 3) * 0.3;
-    }
-    flame.visible = false;
-    if (endT > 1.6 && endInfo && !endInfo.shown) { endInfo.shown = true; showResult(); }
+    plane.position.add(tmp);
+    plane.position.y = Math.max(g + 0.5, plane.position.y - dt * 8);
+    if (endInfo.how === 'crash' || endInfo.how === 'hit') { plane.rotation.z += dt * flight.v * 0.15; plane.rotation.x *= 0.95; }
+    else { plane.rotation.x *= 0.9; plane.rotation.z *= 0.9; }
+    parts.flames.forEach(f => (f.visible = false));
+    if (endT > 1.6 && !endInfo.shown) { endInfo.shown = true; showResult(); }
   }
 
-  // snap animation for the bands
   if (snapT > 0) {
     snapT -= dt;
     const k = Math.max(0, snapT / 0.35);
@@ -307,7 +473,8 @@ function step(now) {
     world.sling.setPouch(r);
   }
 
-  stepCoins(dt);
+  for (const s of parts.spinners) s.rotation.y += dt * 2;
+  stepPickups(dt);
   animateWorld(dt, now);
   updateTrail();
   updateCamera(dt);
@@ -317,27 +484,52 @@ function step(now) {
   if (hudT <= 0 && (phase === 'fly' || phase === 'end') && flight) {
     hudT = 0.08;
     const d = Math.max(0, -flight.z);
-    $('hDist').textContent = `${Math.round(d)} / ${LV.length} m`;
-    $('hProg').style.width = `${clamp(d / LV.length, 0, 1) * 100}%`;
+    const L = LV.length;
+    $('hDist').textContent = Number.isFinite(L) ? `${Math.round(d)} / ${L} m` : `${Math.round(d)} m`;
+    $('hProg').style.width = `${Number.isFinite(L) ? clamp(d / L, 0, 1) * 100 : (d % 250) / 2.5}%`;
     $('hSpd').textContent = Math.round(flight.v * 3.6);
     $('hAlt').textContent = Math.max(0, Math.round(flight.y - LV.ground(flight.x, flight.z)));
     $('hFuel').style.width = `${(flight.fuel / st.fuel) * 100}%`;
+    $('hCoins').textContent = fs ? fs.live + fs.gems * 15 + fs.milestoneCoins : 0;
+    $('hBounce').textContent = '🛞'.repeat(flight.bounces);
+    $('hStar').classList.toggle('on', starT > 0);
   }
 }
 
 function animateWorld(dt, now) {
-  for (const r of world.rings) r.mesh.rotation.z += dt * (r.taken ? 2 : 0.6);
-  for (const sp of world.updraftFx) {
+  const t = now / 1000;
+  for (const r of world.live.rings) r.mesh.rotation.z += dt * (r.taken ? 2 : 0.6);
+  const m = new THREE.Matrix4();
+  for (const sp of world.live.updraftFx) {
     const { seeds, u, gy, h } = sp.userData;
-    const m = new THREE.Matrix4();
     seeds.forEach((s, i) => {
-      s.y = (s.y + dt * s.s) % h;
-      s.a += dt * 1.5;
+      s.y = (s.y + dt * s.s) % h; s.a += dt * 1.5;
       m.makeTranslation(u.x + Math.cos(s.a) * s.r, gy + s.y, u.z + Math.sin(s.a) * s.r);
       sp.setMatrixAt(i, m);
     });
     sp.instanceMatrix.needsUpdate = true;
   }
+  for (const b of world.live.balloons) {
+    if (b.taken) { b.mesh.position.y += dt * 12; b.mesh.scale.multiplyScalar(1 - dt * 0.8); continue; }
+    b.mesh.position.y = b.y - 3.6 + Math.sin(t * 0.8 + b.bob) * 0.6;
+  }
+  for (const f of world.live.birds) {
+    const x = f.x + Math.sin(t * f.speed + f.ph) * f.amp;
+    const vx = Math.cos(t * f.speed + f.ph);
+    f.mesh.position.x = x;
+    f.mesh.rotation.y = vx > 0 ? 0 : Math.PI; // seagull model faces +X
+    if (f.hit) f.mesh.position.y += dt * 4;
+    f.members.forEach(b => { b.position.y += Math.sin(t * 6 + b.userData.ph) * dt * 0.8; b.rotation.x = Math.sin(t * 8 + b.userData.ph) * 0.25; });
+  }
+  // particles
+  for (let i = 0; i < BURST_N; i++) {
+    const q = parts3[i];
+    if (q.life > 0) { q.life -= dt; q.v.y -= 9 * dt; q.p.addScaledVector(q.v, dt); }
+    const s = Math.max(0, q.life) * 1.4;
+    m.makeScale(s, s, s).setPosition(q.p);
+    burst.setMatrixAt(i, m);
+  }
+  burst.instanceMatrix.needsUpdate = true;
 }
 
 function updateTrail() {
@@ -345,25 +537,34 @@ function updateTrail() {
   if (++trailTick % 3) return;
   const a = trailGeo.attributes.position.array;
   a.copyWithin(3, 0, (TRAIL_N - 1) * 3);
-  tmp.set(0, 0, 1.6).applyEuler(plane.rotation).add(plane.position);
+  tmp.set(0, 0, plane.userData.box.max.z).applyEuler(plane.rotation).add(plane.position);
   a[0] = tmp.x; a[1] = tmp.y; a[2] = tmp.z;
   trailCount = Math.min(TRAIL_N, trailCount + 1);
   if (trailCount === 1) for (let i = 1; i < TRAIL_N; i++) a.set([tmp.x, tmp.y, tmp.z], i * 3);
   trailGeo.attributes.position.needsUpdate = true;
+  trail.material.color.set(starT > 0 ? 0xffe27a : 0xffffff);
 }
 
 function updateCamera(dt) {
   let want, look;
-  if (phase === 'aim' || phase === 'title') {
+  const t = performance.now() / 1000;
+  if (phase === 'hangar') {
+    const a = t * 0.35, r = 4 + plane.userData.box.getSize(tmp).z * 2.3;
+    want = plane.position.clone().add(new THREE.Vector3(Math.sin(a) * r, r * 0.3, Math.cos(a) * r));
+    look = plane.position.clone();
+    // wide screens: the hangar panel covers the left, so frame the plane on the right
+    if (window.innerWidth > 820) look.add(tmp.set(-Math.cos(a), 0, Math.sin(a)).multiplyScalar(r * 0.28));
+    else look.y -= r * 0.18;
+  } else if (phase === 'aim' || phase === 'title') {
     const o = launchOrigin();
     const d = aimDir();
     want = o.clone().add(new THREE.Vector3(d.x * -9, 3.2, 10 + aim.power * 2));
     look = o.clone().addScaledVector(d, 25);
     look.y = o.y - 1;
-    if (phase === 'title') { const t = performance.now() / 6000; want.set(Math.sin(t) * 16, LV.launchH + 9, 6 + Math.cos(t) * 10); look.set(0, LV.launchH, -40); }
+    if (phase === 'title') { want.set(Math.sin(t / 6) * 16, LV.launchH + 9, 6 + Math.cos(t / 6) * 10); look.set(0, LV.launchH, -40); }
   } else {
     const back = new THREE.Vector3(Math.sin(flight.psi), 0, Math.cos(flight.psi));
-    const dist = 8.5 + (flight.v - 13) * 0.06;
+    const dist = 8.5 + (flight.v - 13) * 0.06 + plane.userData.box.getSize(tmp).z * 0.6;
     want = plane.position.clone().addScaledVector(back, dist);
     want.y += 2.6 - Math.sin(flight.gamma) * 2.2;
     const gy = LV.ground(want.x, want.z) + 1.5;
@@ -390,136 +591,188 @@ function updateSun() {
 let hintTimer = 0;
 function hint(text, ms) { $('hHint').textContent = text; clearTimeout(hintTimer); if (ms) hintTimer = setTimeout(() => ($('hHint').textContent = ''), ms); }
 let toastTimer = 0;
-function toast(t) { const el = $('hToast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 900); }
-function screen(id) { for (const s of ['title', 'shop', 'result', 'loading']) $(s).classList.toggle('show', s === id); }
+function toast(t) { const el = $('hToast'); el.textContent = t; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1100); }
+function screen(id) { for (const s of ['title', 'shop', 'result', 'loading', 'missions']) $(s).classList.toggle('show', s === id); }
 function showHud(on) { $('hud').classList.toggle('hidden', !on); document.body.classList.toggle('flying', on); }
+const starStr = s => [1, 2, 4].map(b => (s & b ? '★' : '☆')).join('');
+const fmt = n => n.toLocaleString('en-US');
 
 function showTitle() {
+  if (flight || phase === 'hangar') loadLevel(levelN);
   phase = 'title';
   showHud(false);
   setFlightSound(0, false, false);
-  $('tCoins').textContent = save.coins;
+  $('tCoins').textContent = fmt(save.coins);
+  const totalStars = save.stars.reduce((a, s) => a + popcount(s), 0);
+  $('tStars').textContent = `${totalStars}/${LEVEL_COUNT * 3}`;
+  $('tMissions').textContent = `🎯 Missions ${save.missions.length}/${MISSIONS.length}`;
   const grid = $('levels');
   grid.innerHTML = '';
-  for (let i = 0; i < LEVEL_COUNT; i++) {
+  for (let i = 0; i < ALL; i++) {
+    const endless = i === ENDLESS;
+    const locked = endless ? save.cleared < ENDLESS_UNLOCK : i > save.cleared;
     const b = document.createElement('button');
-    const locked = i > save.cleared;
-    const band = i < 5 ? 'b1' : i < 10 ? 'b2' : 'b3';
-    b.className = `lv ${band} ${i < save.cleared ? 'done' : i === save.cleared ? 'next' : ''} ${locked ? 'locked' : ''}`;
-    b.innerHTML = `<b>${locked ? '🔒' : i + 1}</b><span>${LEVEL_NAMES[i]}</span><em>${save.best[i] ? 'best ' + save.best[i] + ' m' : makeLevelLen(i) + ' m'}</em>`;
+    const band = endless ? 'b4' : i < 5 ? 'b1' : i < 10 ? 'b2' : 'b3';
+    b.className = `lv ${band} ${!endless && i < save.cleared ? 'done' : !endless && i === save.cleared ? 'next' : ''} ${locked ? 'locked' : ''} ${endless ? 'endless' : ''}`;
+    const sub = endless ? (locked ? `clear ${ENDLESS_UNLOCK} levels` : save.best[i] ? `best ${fmt(save.best[i])} m` : 'no finish line') : save.best[i] ? `best ${fmt(save.best[i])} m` : `${fmt(levelLength(i))} m`;
+    b.innerHTML = `<b>${locked ? '🔒' : endless ? '∞' : i + 1}</b><span>${LEVEL_NAMES[i]}</span><em>${sub}</em>${!endless && !locked ? `<i class="st">${starStr(save.stars[i])}</i>` : ''}`;
     b.disabled = locked;
-    b.onclick = () => { initAudio(); startLevel(i); };
+    b.onclick = () => { initAudio(); sfx.click(); startLevel(i); };
     grid.appendChild(b);
   }
   screen('title');
 }
-const lenCache = {};
-function makeLevelLen(i) { return (lenCache[i] ??= makeLevel(i).length); }
+
+function showMissions() {
+  const list = $('mList');
+  list.innerHTML = MISSIONS.map(m => `<div class="mission ${save.missions.includes(m.id) ? 'done' : ''}"><span>${save.missions.includes(m.id) ? '✅' : '⬜'} ${m.text}</span><b>🪙 ${fmt(m.reward)}</b></div>`).join('');
+  const s = save.stats;
+  $('mStats').innerHTML = `Flights <b>${fmt(s.flights)}</b> · Total distance <b>${fmt(Math.round(s.totalDist))} m</b> · Top speed <b>${s.bestSpeed} km/h</b> · Max height <b>${s.bestAlt} m</b> · Perfect landings <b>${s.perfect}</b> · Coins earned <b>${fmt(s.earned)}</b>`;
+  screen('missions');
+}
 
 function startLevel(n) {
-  if (n !== levelN || !LV || flight) loadLevel(n);
-  st = makeStats(save.up, save.plane);
-  setPlane(save.plane);
-  flight = null; aim.power = 0; placeOnSling();
+  if (n !== levelN || !LV || flight || phase === 'hangar') loadLevel(n);
+  else { buildPlane(); placeOnSling(); }
+  flight = null; fs = null; aim.power = 0; placeOnSling();
   phase = 'aim';
   screen(null);
   showHud(true);
+  const L = LV.length;
+  $('hLvl').textContent = LV.endless ? '∞ Endless Valley' : `${n + 1} · ${LV.name}`;
+  $('hBest').style.left = `${Number.isFinite(L) ? clamp(save.best[n] / L, 0, 1) * 100 : 0}%`;
+  $('hBest').style.display = Number.isFinite(L) && save.best[n] ? '' : 'none';
+  $('hWindBox').style.display = LV.wind.x || LV.wind.z ? '' : 'none';
+  const w = LV.wind;
+  $('hWind').textContent = (w.x > 0 ? '→' : w.x < 0 ? '←' : '') + (w.z > 0 ? '↓' : '') + ' ' + Math.round(Math.hypot(w.x, w.z) * 3.6);
   $('hCoins').textContent = '0';
-  $('hDist').textContent = `0 / ${LV.length} m`; $('hProg').style.width = '0%';
+  $('hDist').textContent = Number.isFinite(L) ? `0 / ${L} m` : '0 m';
+  $('hProg').style.width = '0%';
   $('hSpd').textContent = '0'; $('hAlt').textContent = '0'; $('hFuel').style.width = '100%';
-  const tips = [
-    'Drag back from the plane and let go!',
-    'Fly through rings for a speed burst.',
-    'Rings refill a bit of rocket fuel.',
-    'Windmills ahead — steer around them.',
-    'Glowing columns are updrafts: ride them up!',
-    'Dive to gain speed, pull up to trade it for height.',
-    'A ridge blocks the valley — find the notch!',
-    'Crosswind! It pushes you sideways.',
-    'Save your rocket for when you slow down.',
-    'Two ridges this time.',
-    'Dusk canyons: rock pillars everywhere.',
-    'Towers! Weave between them.',
-    'Every trick you know.',
-    'Headwind and crosswind. Good luck.',
-    'The longest valley. Make every metre count.',
-  ];
-  hint((MOBILE ? '👆 ' : '🖱 ') + tips[n] + (MOBILE ? '' : '  (or hold Space)'), 0);
+  $('hBounce').textContent = '🛞'.repeat(st.bounces);
+  hint((MOBILE ? '👆 ' : '🖱 ') + LEVEL_TIPS[n] + (MOBILE ? '' : '  (or hold Space)'), 0);
 }
 
 function showResult() {
   const r = endInfo;
-  $('rTitle').textContent = r.win ? '🏁 Level cleared!' : r.how === 'hit' ? '💥 Smack!' : r.how === 'landed' ? '🛬 Touchdown' : '💥 Crashed';
-  $('rSub').textContent = r.win ? `${LV.name} complete.` : `${Math.max(0, LV.length - r.dist)} m to go. Upgrade in the hangar and try again!`;
-  $('rDist').textContent = `${r.dist} / ${LV.length} m`;
+  const titles = { perfect: '✨ Perfect landing!', landed: '🛬 Touchdown', crash: '💥 Crashed', hit: '💥 Smack!' };
+  $('rTitle').textContent = (r.win && !LV.endless ? '🏁 Cleared! ' : '') + titles[r.how];
+  $('rSub').textContent = LV.endless ? `Endless Valley: ${fmt(r.dist)} m (best ${fmt(save.best[levelN])} m)`
+    : r.win ? `${LV.name} complete.` : `${fmt(Math.max(0, LV.length - r.dist))} m to go. Upgrade in the hangar and try again!`;
+  $('rStars').textContent = LV.endless ? '' : starStr(r.stars);
+  $('rStars').title = '★ finish · ★ grab half the coins · ★ perfect landing after the finish';
+  const L = LV.length;
+  $('rDist').textContent = Number.isFinite(L) ? `${fmt(r.dist)} / ${fmt(L)} m` : `${fmt(r.dist)} m`;
   $('rBar').style.width = '0%';
-  requestAnimationFrame(() => requestAnimationFrame(() => ($('rBar').style.width = `${clamp(r.dist / LV.length, 0, 1) * 100}%`)));
-  $('rEarn').innerHTML = r.rows.map(([k, v]) => `<span>${k}</span><b>+${v}</b>`).join('') + `<span class="tot">Total</span><b class="tot">🪙 ${r.total}</b>`;
-  const hasNext = levelN + 1 < LEVEL_COUNT && save.cleared > levelN;
+  requestAnimationFrame(() => requestAnimationFrame(() => ($('rBar').style.width = `${Number.isFinite(L) ? clamp(r.dist / L, 0, 1) * 100 : 100}%`)));
+  const rows = r.rows.map(([k, v]) => `<span>${k}</span><b>+${fmt(v)}</b>`);
+  r.done.forEach(m => rows.push(`<span class="ms">🎯 Mission: ${m.text}</span><b class="ms">+${fmt(m.reward)}</b>`));
+  $('rEarn').innerHTML = rows.join('') + `<span class="tot">Total</span><b class="tot">🪙 <i id="rTotal">0</i></b>`;
+  countUp($('rTotal'), r.total);
+  const hasNext = !LV.endless && levelN + 1 < LEVEL_COUNT && save.cleared > levelN;
   $('rNext').style.display = r.win && hasNext ? '' : 'none';
   $('rRetry').textContent = r.win ? '↻ Replay' : '↻ Retry';
-  if (r.win && levelN + 1 >= LEVEL_COUNT) $('rSub').textContent = 'You beat all 15 valleys! Keep flying for coins and planes.';
+  if (r.win && levelN + 1 >= LEVEL_COUNT && !LV.endless) $('rSub').textContent = 'You beat all 15 valleys! Try Endless, collect stars, max your plane.';
   screen('result');
   showHud(false);
   ($('rNext').style.display === '' ? $('rNext') : $('rRetry')).focus();
 }
+function countUp(el, target) {
+  const t0 = performance.now(), dur = Math.min(1400, 300 + target * 2);
+  let lastTick = 0;
+  const f = now => {
+    const k = Math.min(1, (now - t0) / dur);
+    el.textContent = fmt(Math.round(target * (1 - Math.pow(1 - k, 3))));
+    if (now - lastTick > 45 && k < 1) { sfx.coinTick(); lastTick = now; }
+    if (k < 1) requestAnimationFrame(f);
+  };
+  requestAnimationFrame(f);
+}
 
+/* ---------------- hangar ---------------- */
 function showShop() {
-  phase = phase === 'end' ? 'end' : 'title';
+  if (flight || phase === 'end') loadLevel(levelN);
+  else rebuildPreview();
+  phase = 'hangar';
+  plane.position.set(0, LV.launchH + 4, 6);
+  plane.rotation.set(0, 0, 0);
   showHud(false);
   renderShop();
   screen('shop');
 }
+function rebuildPreview() {
+  const pos = plane.position.clone();
+  buildPlane();
+  plane.position.copy(pos);
+  world.dispose();
+  world = buildWorld(LV, scene, lights, save.up.sling);
+}
 function renderShop() {
-  $('sCoins').textContent = save.coins;
+  $('sCoins').textContent = fmt(save.coins);
+  const bought = tiersBought();
+  $('sTiers').textContent = `${bought}/${TOTAL_TIERS}`;
   const up = $('upCards'); up.innerHTML = '';
   for (const u of UPGRADES) {
     const t = save.up[u.id];
     const cost = t < MAX_TIER ? u.costs[t] : 0;
     const c = document.createElement('div');
     c.className = 'card';
-    c.innerHTML = `<div class="t">${u.icon} ${u.name}</div><div class="d">${u.desc}</div><div class="pips">${Array.from({ length: MAX_TIER }, (_, i) => `<i class="${i < t ? 'on' : ''}"></i>`).join('')}</div>`;
+    c.innerHTML = `<div class="t">${u.icon} ${u.name}</div><div class="d">${u.desc}<br><small>${u.part}</small></div><div class="pips">${Array.from({ length: MAX_TIER }, (_, i) => `<i class="${i < t ? 'on' : ''}"></i>`).join('')}</div>`;
     const b = document.createElement('button');
     if (t >= MAX_TIER) { b.textContent = 'MAX'; b.className = 'max'; b.disabled = true; }
-    else { b.textContent = `Upgrade · 🪙 ${cost}`; if (save.coins < cost) b.className = 'poor'; }
+    else { b.textContent = `Upgrade · 🪙 ${fmt(cost)}`; if (save.coins < cost) b.className = 'poor'; }
     b.onclick = () => {
       if (t >= MAX_TIER) return;
       if (save.coins < cost) return sfx.deny();
-      save.coins -= cost; save.up[u.id]++; persist(); sfx.buy(); renderShop();
+      save.coins -= cost; save.up[u.id]++; persist(); sfx.buy();
+      rebuildPreview(); renderShop();
+      spawnBurst(plane.position, 0xffc83a, 24, 6);
     };
     c.appendChild(b);
     up.appendChild(c);
   }
-  const pc = $('planeCards'); pc.innerHTML = '';
-  for (const p of PLANES) {
-    const owned = save.planes.includes(p.id);
+  // evolution chain
+  const ev = $('evoChain'); ev.innerHTML = '';
+  FORMS.forEach((f, i) => {
+    const owned = save.forms.includes(f.id);
+    const prevOwned = i === 0 || save.forms.includes(FORMS[i - 1].id);
     const c = document.createElement('div');
-    c.className = 'card' + (save.plane === p.id ? ' sel' : '');
-    const perks = [`glide ×${p.gr}`, p.thrust !== 1 && `rocket ×${p.thrust}`, p.coin > 1 && `coins ×${p.coin}`].filter(Boolean).join(' · ');
-    c.innerHTML = `<div class="t">✈ ${p.name}</div><div class="d">${p.blurb}</div><div class="stat">${perks}</div>`;
+    c.className = 'card evo' + (save.form === f.id ? ' sel' : '') + (owned ? '' : ' locked');
+    const perks = [`glide ×${f.gr}`, `rocket ×${f.thrust}`, `coins ×${f.coin}`].join(' · ');
+    c.innerHTML = `<div class="t">${['①', '②', '③', '④', '⑤'][i]} ${f.name}</div><div class="d">${f.blurb}</div><div class="stat">${perks}</div>${owned ? '' : `<div class="stat need ${bought >= f.need ? 'ok' : ''}">Needs ${f.need} upgrade tiers (${bought}/${f.need})</div>`}`;
     const b = document.createElement('button');
-    if (save.plane === p.id) { b.textContent = 'Flying this'; b.className = 'using'; }
-    else if (owned) { b.textContent = 'Use'; }
-    else { b.textContent = `Buy · 🪙 ${p.cost}`; if (save.coins < p.cost) b.className = 'poor'; }
+    if (save.form === f.id) { b.textContent = 'Flying this'; b.className = 'using'; }
+    else if (owned) b.textContent = 'Fly this';
+    else if (!prevOwned) { b.textContent = '🔒 Evolve previous first'; b.className = 'max'; }
+    else { b.textContent = `🧬 Evolve · 🪙 ${fmt(f.cost)}`; if (save.coins < f.cost || bought < f.need) b.className = 'poor'; }
     b.onclick = () => {
-      if (save.plane === p.id) return;
-      if (!owned) { if (save.coins < p.cost) return sfx.deny(); save.coins -= p.cost; save.planes.push(p.id); sfx.buy(); }
-      save.plane = p.id; persist(); renderShop();
+      if (save.form === f.id) return;
+      if (!owned) {
+        if (!prevOwned || bought < f.need || save.coins < f.cost) return sfx.deny();
+        save.coins -= f.cost; save.forms.push(f.id); sfx.evolve();
+        setTimeout(() => spawnBurst(plane.position, 0xa35cff, 40, 10), 900);
+      } else sfx.click();
+      save.form = f.id; persist(); rebuildPreview(); renderShop();
     };
     c.appendChild(b);
-    pc.appendChild(c);
-  }
+    ev.appendChild(c);
+  });
 }
 
-$('tShop').onclick = () => { initAudio(); showShop(); };
-$('sBack').onclick = () => showTitle();
-$('sFly').onclick = () => { initAudio(); startLevel(endInfo && !endInfo.win ? levelN : Math.min(save.cleared, LEVEL_COUNT - 1)); };
-$('rShop').onclick = () => showShop();
-$('rRetry').onclick = () => { loadLevel(levelN); startLevel(levelN); };
-$('rNext').onclick = () => startLevel(levelN + 1);
-$('hExit').onclick = () => { if (phase === 'fly') endFlight(false, 'crash'); else showTitle(); };
-$('hMute').onclick = () => { initAudio(); $('hMute').textContent = toggleMute() ? '🔇' : '🔊'; };
-$('hMute').textContent = isMuted() ? '🔇' : '🔊';
+$('tShop').onclick = () => { initAudio(); sfx.click(); showShop(); };
+$('tMissions').onclick = () => { initAudio(); sfx.click(); showMissions(); };
+$('mBack').onclick = () => { sfx.click(); showTitle(); };
+$('sBack').onclick = () => { sfx.click(); showTitle(); };
+$('sFly').onclick = () => { initAudio(); sfx.click(); startLevel(endInfo && !endInfo.win ? levelN : Math.min(save.cleared, LEVEL_COUNT - 1)); };
+$('rShop').onclick = () => { sfx.click(); showShop(); };
+$('rRetry').onclick = () => { sfx.click(); startLevel(levelN); };
+$('rNext').onclick = () => { sfx.click(); startLevel(levelN + 1); };
+$('rLevels').onclick = () => { sfx.click(); showTitle(); };
+$('hExit').onclick = () => { if (phase === 'fly') endFlight('crash'); else showTitle(); };
+const syncAudioBtns = () => { $('hMute').textContent = isSfxOn() ? '🔊' : '🔇'; for (const id of ['hMusic', 'tMusic']) { $(id).textContent = isMusicOn() ? '🎵' : '🎵̸'; $(id).classList.toggle('off', !isMusicOn()); } };
+$('hMute').onclick = () => { initAudio(); toggleSfx(); syncAudioBtns(); };
+$('hMusic').onclick = $('tMusic').onclick = () => { initAudio(); toggleMusic(); syncAudioBtns(); };
+syncAudioBtns();
 
 /* ---------------- input ---------------- */
 const pullMax = () => Math.min(window.innerWidth, window.innerHeight) * 0.32;
@@ -543,7 +796,8 @@ canvas.addEventListener('pointermove', e => {
     aim.power = clamp(Math.hypot(dx, dy) / m, 0, 1);
     aim.yaw = clamp((dx / m) * 0.45, -0.5, 0.5);
     aim.pitch = clamp(0.08 + 0.5 * clamp(dy / m, 0, 1), 0.05, 0.75);
-    if (Math.abs(aim.power - prev) > 0.05 && performance.now() - lastStretch > 60) { sfx.stretch(); lastStretch = performance.now(); }
+    setStretch(aim.power);
+    if (Math.abs(aim.power - prev) > 0.06 && performance.now() - lastStretch > 70) { sfx.stretchClick(); lastStretch = performance.now(); }
     placeOnSling();
   } else if (joy.active && e.pointerId === joy.id) {
     const m = Math.min(window.innerWidth, window.innerHeight) * 0.18;
@@ -562,13 +816,13 @@ bb.addEventListener('pointerdown', e => { e.preventDefault(); boostTouch = true;
 ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => bb.addEventListener(ev, () => { boostTouch = false; bb.classList.remove('on'); }));
 
 window.addEventListener('keydown', e => {
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code) && phase !== 'title') e.preventDefault();
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code) && (phase === 'aim' || phase === 'fly')) e.preventDefault();
   if (e.repeat) return;
   keys.add(e.code);
   initAudio();
   if (phase === 'aim' && e.code === 'Space') { aim.keyCharge = true; aim.chargeDir = 1; aim.power = Math.max(aim.power, 0.15); hint('', 0); }
-  if (e.code === 'KeyR' && (phase === 'fly' || phase === 'end')) { screen(null); loadLevel(levelN); startLevel(levelN); }
-  if (e.code === 'Escape') { if (phase === 'fly') endFlight(false, 'crash'); else if (phase === 'aim') showTitle(); }
+  if (e.code === 'KeyR' && (phase === 'fly' || phase === 'end')) { screen(null); startLevel(levelN); }
+  if (e.code === 'Escape') { if (phase === 'fly') endFlight('crash'); else if (phase === 'aim') showTitle(); }
 });
 window.addEventListener('keyup', e => {
   keys.delete(e.code);
@@ -584,6 +838,8 @@ function monoFrame(now) {
   renderer.render(scene, camera);
 }
 
+function badge(on) { const b = $('dxrBadge'); b.textContent = on ? 'DisplayXR 3D' : '2D'; b.classList.toggle('on', on); }
+
 (async () => {
   await loadAll((d, n) => { $('loadBar').style.width = `${(d / n) * 100}%`; });
   loadLevel(Math.min(save.cleared, LEVEL_COUNT - 1));
@@ -597,10 +853,9 @@ function monoFrame(now) {
   }).then(c => { dxr = c; if (c && c.active) badge(true); });
 })();
 
-function badge(on) { const b = $('dxrBadge'); b.textContent = on ? 'DisplayXR 3D' : '2D'; b.classList.toggle('on', on); }
-
 if (DEBUG) window.__sw = {
-  get phase() { return phase; }, get flight() { return flight; }, get level() { return LV; }, save,
-  start: n => startLevel(n), aim, fire, keys, endFlight,
+  get phase() { return phase; }, get flight() { return flight; }, get level() { return LV; }, get fs() { return fs; }, save,
+  start: n => startLevel(n), aim, fire, keys, endFlight, shop: showShop, persist,
   give: c => { save.coins += c; persist(); },
+  maxAll: () => { UPGRADES.forEach(u => (save.up[u.id] = MAX_TIER)); persist(); },
 };
