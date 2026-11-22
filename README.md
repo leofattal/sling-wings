@@ -76,6 +76,6 @@ Glasses-free 3D: [DisplayXR](https://github.com/DisplayXR).
 ## Garage, cards and runway
 
 - **Evolution garage:** buy planes and merge two of the same form to evolve them: Skipper → Drifter → Courier → Falcon → Jumbo → Comet → Orbiter. Making a form for the first time unlocks it and plays the evolution scene.
-- **Idle income:** every plane in the garage earns coins per minute, including while the game is closed (up to 4 hours).
-- **Reward cards:** after every flight of 20 m or more, pick 1 of 3: a free upgrade tier (capped by levels cleared), a coin pouch, or a lucky flight (next flight pays ×1.5).
+- **Idle income:** every plane in the garage earns coins per minute, including while the game is closed (up to 2 hours).
+- **Reward cards:** after every flight of 20 m or more, pick 1 of 3: a free upgrade tier (sometimes; capped by levels cleared), a coin pouch, or a lucky flight (next flight pays ×1.25).
 - **Runway launch:** toggle on the aim screen. Hold to accelerate down the runway and let go on the green zone for a perfect takeoff with extra speed; the plane leaves the deck level.

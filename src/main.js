@@ -968,12 +968,12 @@ $('launchMode').onclick = () => {
 /* ---------------- garage: merge to evolve, earn while away ---------------- */
 const FORM_ICON = ['🛩️', '🛰️', '🛫', '🦅', '✈️', '🚀', '🛸'];
 const MAXF = FORMS.length - 1;
-const AWAY_CAP_MIN = 240; // the garage stops earning after 4 hours
-const rateOf = L => Math.round(2.4 ** L * 10) / 10; // coins per minute
+const AWAY_CAP_MIN = 120; // the garage stops earning after 2 hours
+const rateOf = L => Math.round(0.5 * 2.05 ** L * 10) / 10; // coins per minute
 const garageRate = () => Math.round(save.garage.reduce((a, L) => a + (L >= 0 ? rateOf(L) : 0), 0) * 10) / 10;
 const bestForm = () => Math.max(0, ...save.forms.map(id => FORMS.findIndex(f => f.id === id)));
 const spawnLevel = () => Math.max(0, bestForm() - 3);
-const buyCost = () => Math.round(150 * 1.09 ** save.bought);
+const buyCost = () => Math.round(250 * 1.13 ** save.bought);
 function accrue() {
   const now = Date.now(), r = garageRate();
   const mins = clamp((now - save.garageT) / 60000, 0, AWAY_CAP_MIN);
@@ -1132,23 +1132,23 @@ function dealCards() {
   if (endInfo.dist < 20) { $('rPick').style.display = 'none'; return; }
   $('rPick').style.display = '';
   // free tiers only up to a cap that rises as you clear levels, so coins still matter
-  const cap = Math.min(MAX_TIER, 2 + Math.floor(save.cleared / 2));
+  const cap = Math.min(MAX_TIER, 1 + Math.floor(save.cleared / 3));
   const ups = UPGRADES.filter(u => save.up[u.id] < cap).sort(() => Math.random() - 0.5);
-  const pouch = Math.round((25 + 18 * Math.min(levelN, 14)) * (0.8 + Math.random() * 0.6));
-  const deck = ups.slice(0, 2).map(u => ({ kind: 'up', u }));
-  if (deck.length === 2 && Math.random() < 0.3) deck[1] = { kind: 'boost' };
+  const pouch = Math.round((12 + 8 * Math.min(levelN, 14)) * (0.8 + Math.random() * 0.5));
+  // at most one free upgrade per deal, and only some of the time
+  const deck = Math.random() < 0.55 ? ups.slice(0, 1).map(u => ({ kind: 'up', u })) : [];
   deck.push({ kind: 'coin', n: pouch });
-  while (deck.length < 3) deck.push(deck.some(c => c.kind === 'boost') ? { kind: 'coin', n: Math.round(pouch * 1.6) } : { kind: 'boost' });
+  while (deck.length < 3) deck.push(deck.some(c => c.kind === 'boost') ? { kind: 'coin', n: Math.round(pouch * 1.4) } : { kind: 'boost' });
   deck.sort(() => Math.random() - 0.5);
   deck.forEach(c => {
     const b = document.createElement('button');
     if (c.kind === 'up') { b.className = 'pc rare'; b.innerHTML = `<i class="i">${c.u.icon}</i><b>${c.u.name} +1</b><span>Free tier ${save.up[c.u.id] + 1}</span>`; }
     else if (c.kind === 'coin') { b.className = 'pc coin'; b.innerHTML = `<i class="i">🪙</i><b>+${fmt(c.n)} coins</b><span>Coin pouch</span>`; }
-    else { b.className = 'pc'; b.innerHTML = `<i class="i">⚡</i><b>Lucky flight</b><span>Next flight ×1.5 coins</span>`; }
+    else { b.className = 'pc'; b.innerHTML = `<i class="i">⚡</i><b>Lucky flight</b><span>Next flight ×1.25 coins</span>`; }
     b.onclick = () => {
       if (c.kind === 'up') save.up[c.u.id]++;
       else if (c.kind === 'coin') { save.coins += c.n; save.stats.earned += c.n; }
-      else save.boost = 1.5;
+      else save.boost = 1.25;
       persist(); sfx.buy();
       [...el.children].forEach(x => { x.disabled = true; x.classList.add(x === b ? 'taken' : 'gone'); });
     };
@@ -1164,7 +1164,7 @@ function checkAway() {
   if (away < 3 * 60000 || n < 10) return;
   const mins = Math.min(AWAY_CAP_MIN, Math.floor(away / 60000));
   const h = Math.floor(mins / 60), m = mins % 60;
-  $('awayTxt').innerHTML = `Your garage planes earned <b>🪙 ${fmt(n)}</b> over ${h ? h + 'h ' : ''}${m}m (+${garageRate()} a minute). The garage earns for up to 4 hours while you're away.`;
+  $('awayTxt').innerHTML = `Your garage planes earned <b>🪙 ${fmt(n)}</b> over ${h ? h + 'h ' : ''}${m}m (+${garageRate()} a minute). The garage earns for up to 2 hours while you're away.`;
   $('away').classList.add('show');
 }
 $('awayGo').onclick = () => { initAudio(); collect(); $('away').classList.remove('show'); if (phase === 'title') showTitle(); };
