@@ -12,7 +12,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Sling Wings" />
   <title>Sling Wings</title>
-  <meta name="description" content="Slingshot a plane down 15 valleys, grab coins, bolt on upgrades and evolve it. Glasses-free 3D with DisplayXR." />
+  <meta name="description" content="Slingshot or take off down a runway, grab coins, merge planes in your garage and evolve them all the way to a UFO. Glasses-free 3D with DisplayXR." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap" rel="stylesheet" />
 </head>
@@ -71,9 +71,17 @@
         <h2>Hangar</h2>
         <div class="coins big">🪙 <b id="sCoins">0</b></div>
       </div>
+      <h3>🧬 Evolution garage</h3>
+      <div class="small">Merge two matching planes to evolve them: tap one, then tap its twin (or drag it on top). Garage planes earn coins, even while you're away.</div>
+      <div class="garage" id="garage"></div>
+      <div class="gbtns">
+        <button class="btn" id="gBuy">Buy plane</button>
+        <button class="btn ghost" id="gMerge">⚡ Auto-merge</button>
+        <button class="btn ghost gold" id="gCollect">🪙 0</button>
+      </div>
+      <h3>✈ Pick your plane</h3>
+      <div class="forms" id="evoChain"></div>
       <div class="small">Every upgrade bolts a new part onto your plane. Upgrade tiers bought: <b id="sTiers">0</b></div>
-      <h3>🧬 Evolution</h3>
-      <div class="cards evos" id="evoChain"></div>
       <h3>Upgrades</h3>
       <div class="cards" id="upCards"></div>
       <div class="row end sticky">
@@ -89,6 +97,7 @@
       <div class="sub" id="rSub"></div>
       <div class="dist"><div class="fill" id="rBar"></div><span id="rDist"></span></div>
       <div class="earn" id="rEarn"></div>
+      <div id="rPick"><h3>🎴 Pick a reward</h3><div class="pick" id="rCards"></div></div>
       <div class="row end">
         <button class="btn ghost" id="rLevels">Levels</button>
         <button class="btn ghost" id="rShop">🛠 Hangar</button>
@@ -116,12 +125,33 @@
     </div>
     <div class="hint" id="hHint"></div>
     <div id="aimMeter"></div>
+    <button class="chip launch-mode" id="launchMode">🎯 Slingshot</button>
     <div class="hand" id="hand">👆</div>
     <div class="toast" id="hToast"></div>
     <button id="boostBtn" class="touch-only">🔥</button>
   </div>
 
   <div id="joy"><i></i></div>
+
+  <div id="away" class="modal">
+    <div class="panel">
+      <h2>💤 While you were away</h2>
+      <div class="sub" id="awayTxt"></div>
+      <div class="row end"><button class="btn" id="awayGo">Collect</button></div>
+    </div>
+  </div>
+
+  <div id="evo" class="modal">
+    <div class="rays"></div>
+    <div class="evo-card">
+      <small>EVOLUTION!</small>
+      <h2 id="evoName"></h2>
+      <div class="sub" id="evoFrom"></div>
+      <div class="stat" id="evoStats"></div>
+      <button class="btn" id="evoOk">Awesome!</button>
+    </div>
+  </div>
+  <div id="flash"></div>
   <div class="dxr-badge" id="dxrBadge" title="Open in the DisplayXR Browser on a spatial display for glasses-free 3D">2D</div>
   <script type="module" src="/src/main.js"></script>
 </body>

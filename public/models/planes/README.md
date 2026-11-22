@@ -18,3 +18,5 @@ under the license listed below.
 CC BY 4.0 permits sharing and adaptation, including commercial use, provided
 appropriate credit is retained, the license is linked, and modifications are
 identified. These credits do not imply endorsement by the original creators.
+
+- `ufo.glb`: "Ufo" by hat_my_guy, CC0 1.0, via Poly Pizza (https://poly.pizza/m/NgURFR5T9m). Hull recoloured in code.

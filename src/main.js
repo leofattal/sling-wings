@@ -18,17 +18,22 @@ const SAVE_KEY = 'slingwings.v2';
 const save = {
   coins: 0, up: Object.fromEntries(UPGRADES.map(u => [u.id, 0])), form: 'c172', forms: ['c172'],
   cleared: 0, best: Array(ALL).fill(0), stars: Array(LEVEL_COUNT).fill(0), missions: [],
-  stats: { flights: 0, totalDist: 0, bestSpeed: 0, bestAlt: 0, earned: 0, perfect: 0 },
+  stats: { flights: 0, totalDist: 0, bestSpeed: 0, bestAlt: 0, earned: 0, perfect: 0, merges: 0 },
+  garage: [0, -1, -1, -1, -1, -1, -1, -1], bought: 0, garageT: Date.now(), bank: 0, launch: 'sling', boost: 1,
 };
+let hadSave = false;
 try {
   const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-  if (s) Object.assign(save, s, { up: { ...save.up, ...s.up }, stats: { ...save.stats, ...s.stats } });
+  if (s) { hadSave = true; Object.assign(save, s, { up: { ...save.up, ...s.up }, stats: { ...save.stats, ...s.stats } }); }
   else {
     const v1 = JSON.parse(localStorage.getItem('slingwings.v1'));
     if (v1) { save.coins = v1.coins || 0; save.cleared = v1.cleared || 0; Object.assign(save.up, v1.up || {}); (v1.best || []).forEach((b, i) => (save.best[i] = b)); }
   }
 } catch (e) { /* fresh save */ }
 while (save.best.length < ALL) save.best.push(0);
+// saves from before the garage: park the best plane you already evolved in the first bay
+if (!Array.isArray(save.garage) || save.garage.length !== 8) save.garage = [0, -1, -1, -1, -1, -1, -1, -1];
+if (hadSave && !JSON.parse(localStorage.getItem(SAVE_KEY) || '{}').garage) save.garage[0] = Math.max(0, ...save.forms.map(id => FORMS.findIndex(f => f.id === id)));
 const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage blocked */ } };
 const tiersBought = () => UPGRADES.reduce((a, u) => a + save.up[u.id], 0);
 const formOf = id => FORMS.find(f => f.id === id) || FORMS[0];
@@ -53,6 +58,9 @@ const MISSIONS = [
   { id: 'g5', text: 'Collect 5 gems in one flight', reward: 300, test: f => f.gems >= 5 },
   { id: 'evo2', text: 'Evolve into the Courier', reward: 400, test: () => save.forms.includes('citation2') },
   { id: 'evo4', text: 'Evolve into the Jumbo', reward: 2000, test: () => save.forms.includes('b789') },
+  { id: 'evo6', text: 'Evolve into the Orbiter', reward: 5000, test: () => save.forms.includes('ufo') },
+  { id: 'm10', text: 'Merge 10 planes in the garage', reward: 300, test: () => save.stats.merges >= 10 },
+  { id: 'rw', text: 'Perfect runway takeoff', reward: 150, test: f => f.perfectTakeoff },
   { id: 'lv5', text: 'Clear level 5', reward: 250, test: () => save.cleared >= 5 },
   { id: 'lv10', text: 'Clear level 10', reward: 800, test: () => save.cleared >= 10 },
   { id: 'lv15', text: 'Clear all 15 levels', reward: 2500, test: () => save.cleared >= 15 },
@@ -155,6 +163,8 @@ function loadLevel(n) {
   world?.dispose();
   LV = makeLevel(n);
   world = buildWorld(LV, scene, lights, save.up.sling, AHEAD);
+  buildRunway();
+  syncLaunchMode();
   buildPlane();
   flight = null;
   aim.power = 0; aim.yaw = 0; aim.pitch = 0.25;
@@ -220,13 +230,17 @@ function fire() {
   $('aimMeter').classList.remove('on');
   $('hand').classList.remove('on');
   if (aim.power < 0.12) { aim.power = 0; placeOnSling(); return; }
-  const o = launchOrigin();
-  flight = newFlight(o.x, o.y, o.z, launchSpeed(), aim.pitch, aim.yaw, st.fuel, st.bounces);
+  launchFlight(launchOrigin(), launchSpeed(), aim.pitch, aim.yaw);
+  snapT = 0.35;
+}
+function launchFlight(o, speed, pitch, yaw) {
+  flight = newFlight(o.x, o.y, o.z, speed, pitch, yaw, st.fuel, st.bounces);
+  document.body.classList.remove('aiming');
+  if (save.boost > 1) setTimeout(() => toast(`⚡ Lucky flight: coins ×${save.boost}`), 400);
   fs = { coins: 0, gems: 0, stars: 0, fuels: 0, rings: 0, balloons: 0, nearMiss: 0, bounces: 0, birds: 0, milestones: 0, milestoneCoins: 0, crossed: false, maxAlt: 0, maxV: 0, landing: null, dist: 0, endless: LV.endless, live: 0 };
   starT = 0;
   phase = 'fly';
   sfx.launch(); buzz(30);
-  snapT = 0.35;
   dots.visible = false;
   trail.visible = true; trailCount = 0;
   hint(MOBILE ? 'Drag to steer · hold 🔥 to boost' : 'W/S climb & dive · A/D steer · Space boost', 3500);
@@ -413,8 +427,10 @@ function endFlight(how) {
     if (newStars) rows.push([`New stars × ${newStars}`, newStars * 50]);
   }
   total = rows.reduce((a, r) => a + r[1], 0);
-  const mul = st.coinMul;
-  if (mul > 1.001) { const bonus = Math.round(total * (mul - 1)); rows.push([`${formOf(save.form).name} & charm bonus ×${mul.toFixed(2)}`, bonus]); total += bonus; }
+  const lucky = save.boost > 1 ? save.boost : 1;
+  const mul = st.coinMul * lucky;
+  if (mul > 1.001) { const bonus = Math.round(total * (mul - 1)); rows.push([`${formOf(save.form).name}${lucky > 1 ? ', lucky flight' : ''} & charm bonus ×${mul.toFixed(2)}`, bonus]); total += bonus; }
+  save.boost = 1;
   if (win && !LV.endless) save.cleared = Math.max(save.cleared, levelN + 1);
   save.stats.flights++; save.stats.totalDist += d;
   save.stats.bestSpeed = Math.max(save.stats.bestSpeed, Math.round(fs.maxV * 3.6));
@@ -462,7 +478,8 @@ function step(now) {
     }
     const ay = (keys.has('ArrowLeft') || keys.has('KeyA') ? 1 : 0) - (keys.has('ArrowRight') || keys.has('KeyD') ? 1 : 0);
     const ap = (keys.has('ArrowUp') || keys.has('KeyW') ? 1 : 0) - (keys.has('ArrowDown') || keys.has('KeyS') ? 1 : 0);
-    if (ay || ap) { aim.yaw = clamp(aim.yaw + ay * dt * 0.6, -0.5, 0.5); aim.pitch = clamp(aim.pitch + ap * dt * 0.5, 0.05, 0.75); placeOnSling(); }
+    if (runwayMode()) stepRunway(dt, ay);
+    else if (ay || ap) { aim.yaw = clamp(aim.yaw + ay * dt * 0.6, -0.5, 0.5); aim.pitch = clamp(aim.pitch + ap * dt * 0.5, 0.05, 0.75); placeOnSling(); }
   }
 
   if (phase === 'fly') {
@@ -499,6 +516,12 @@ function step(now) {
     world.sling.setPouch(r);
   }
 
+  if (evoT > 0) {
+    evoT += dt;
+    const x = Math.max(0, evoT - 0.35);
+    plane.scale.setScalar(Math.max(0.01, 1 - Math.exp(-5 * x) * Math.cos(11 * x)));
+    plane.rotation.y += dt * (0.6 + 7 * Math.exp(-1.2 * x));
+  }
   for (const s of parts.spinners) s.rotation.y += dt * 2;
   stepPickups(dt);
   animateWorld(dt, now);
@@ -579,8 +602,14 @@ function updateCamera(dt) {
     want = plane.position.clone().add(new THREE.Vector3(Math.sin(a) * r, r * 0.3, Math.cos(a) * r));
     look = plane.position.clone();
     // wide screens: the hangar panel covers the left, so frame the plane on the right
-    if (window.innerWidth > 820) look.add(tmp.set(-Math.cos(a), 0, Math.sin(a)).multiplyScalar(r * 0.28));
+    if (evoT > 0) { want.copy(plane.position).add(tmp.set(Math.sin(a) * r * 0.75, r * 0.18, Math.cos(a) * r * 0.75)); look.y -= r * 0.12; }
+    else if (window.innerWidth > 820) look.add(tmp.set(-Math.cos(a), 0, Math.sin(a)).multiplyScalar(r * 0.28));
     else look.y -= r * 0.18;
+  } else if (phase === 'aim' && runwayMode()) {
+    const portrait = window.innerHeight > window.innerWidth;
+    const b = tmp.set(Math.sin(rw.yaw), 0, Math.cos(rw.yaw));
+    want = plane.position.clone().addScaledVector(b, portrait ? 12 : 9); want.y += portrait ? 4.2 : 3;
+    look = plane.position.clone().addScaledVector(b, -22); look.y += 0.5;
   } else if (phase === 'aim' || phase === 'title') {
     const o = launchOrigin();
     const d = aimDir();
@@ -620,7 +649,7 @@ function hint(text, ms) { $('hHint').textContent = text; clearTimeout(hintTimer)
 let toastTimer = 0;
 function toast(t) { const el = $('hToast'); el.textContent = t; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1100); }
 function screen(id) { for (const s of ['title', 'shop', 'result', 'loading', 'missions']) $(s).classList.toggle('show', s === id); }
-function showHud(on) { $('hud').classList.toggle('hidden', !on); document.body.classList.toggle('flying', on); }
+function showHud(on) { $('hud').classList.toggle('hidden', !on); document.body.classList.toggle('flying', on); if (!on) document.body.classList.remove('aiming'); }
 const starStr = s => [1, 2, 4].map(b => (s & b ? '★' : '☆')).join('');
 const fmt = n => n.toLocaleString('en-US');
 
@@ -677,8 +706,11 @@ function startLevel(n) {
   $('hProg').style.width = '0%';
   $('hSpd').textContent = '0'; $('hAlt').textContent = '0'; $('hFuel').style.width = '100%';
   $('hBounce').textContent = '🛞'.repeat(st.bounces);
-  hint((MOBILE ? '👆 ' : '🖱 ') + LEVEL_TIPS[n] + (MOBILE ? '' : '  (or hold Space)'), 0);
-  $('hand').classList.toggle('on', MOBILE && save.stats.flights < 3);
+  document.body.classList.add('aiming');
+  syncLaunchMode();
+  if (runwayMode()) resetRunway();
+  hint(runwayMode() ? `${MOBILE ? '👆 Hold' : '🖱 Hold the mouse or Space'} to race down the runway · let go on the green to take off` : (MOBILE ? '👆 ' : '🖱 ') + LEVEL_TIPS[n] + (MOBILE ? '' : '  (or hold Space)'), 0);
+  $('hand').classList.toggle('on', MOBILE && save.stats.flights < 3 && !runwayMode());
   $('aimMeter').classList.remove('on');
   if (tilt.on) tilt.calibrate = true;
 }
@@ -703,6 +735,7 @@ function showResult() {
   $('rNext').style.display = r.win && hasNext ? '' : 'none';
   $('rRetry').textContent = r.win ? '↻ Replay' : '↻ Retry';
   if (r.win && levelN + 1 >= LEVEL_COUNT && !LV.endless) $('rSub').textContent = 'You beat all 15 valleys! Try Endless, collect stars, max your plane.';
+  dealCards();
   screen('result');
   showHud(false);
   ($('rNext').style.display === '' ? $('rNext') : $('rRetry')).focus();
@@ -736,6 +769,7 @@ function rebuildPreview() {
   plane.position.copy(pos);
   world.dispose();
   world = buildWorld(LV, scene, lights, save.up.sling, AHEAD);
+  syncLaunchMode();
 }
 function renderShop() {
   $('sCoins').textContent = fmt(save.coins);
@@ -761,32 +795,8 @@ function renderShop() {
     c.appendChild(b);
     up.appendChild(c);
   }
-  // evolution chain
-  const ev = $('evoChain'); ev.innerHTML = '';
-  FORMS.forEach((f, i) => {
-    const owned = save.forms.includes(f.id);
-    const prevOwned = i === 0 || save.forms.includes(FORMS[i - 1].id);
-    const c = document.createElement('div');
-    c.className = 'card evo' + (save.form === f.id ? ' sel' : '') + (owned ? '' : ' locked');
-    const perks = [`glide ×${f.gr}`, `rocket ×${f.thrust}`, `coins ×${f.coin}`].join(' · ');
-    c.innerHTML = `<div class="t">${['①', '②', '③', '④', '⑤'][i]} ${f.name}</div><div class="d">${f.blurb}</div><div class="stat">${perks}</div>${owned ? '' : `<div class="stat need ${bought >= f.need ? 'ok' : ''}">Needs ${f.need} upgrade tiers (${bought}/${f.need})</div>`}`;
-    const b = document.createElement('button');
-    if (save.form === f.id) { b.textContent = 'Flying this'; b.className = 'using'; }
-    else if (owned) b.textContent = 'Fly this';
-    else if (!prevOwned) { b.textContent = '🔒 Evolve previous first'; b.className = 'max'; }
-    else { b.textContent = `🧬 Evolve · 🪙 ${fmt(f.cost)}`; if (save.coins < f.cost || bought < f.need) b.className = 'poor'; }
-    b.onclick = () => {
-      if (save.form === f.id) return;
-      if (!owned) {
-        if (!prevOwned || bought < f.need || save.coins < f.cost) return sfx.deny();
-        save.coins -= f.cost; save.forms.push(f.id); sfx.evolve();
-        setTimeout(() => spawnBurst(plane.position, 0xa35cff, 40, 10), 900);
-      } else sfx.click();
-      save.form = f.id; persist(); rebuildPreview(); renderShop();
-    };
-    c.appendChild(b);
-    ev.appendChild(c);
-  });
+  renderGarage();
+  renderForms();
 }
 
 $('tShop').onclick = () => { initAudio(); sfx.click(); showShop(); };
@@ -808,7 +818,11 @@ syncAudioBtns();
 const pullMax = () => (window.innerHeight > window.innerWidth ? window.innerHeight * 0.26 : Math.min(window.innerWidth, window.innerHeight) * 0.32);
 canvas.addEventListener('pointerdown', e => {
   initAudio();
-  if (phase === 'aim') {
+  if (phase === 'aim' && runwayMode()) {
+    rw.holding = true; rw.started = true; rw.sx = e.clientX; rw.y0 = rw.yaw;
+    canvas.setPointerCapture(e.pointerId);
+    hint('', 0);
+  } else if (phase === 'aim') {
     aim.dragging = true; aim.sx = e.clientX; aim.sy = e.clientY; aim.keyCharge = false;
     canvas.setPointerCapture(e.pointerId);
     hint('', 0);
@@ -820,7 +834,9 @@ canvas.addEventListener('pointerdown', e => {
 });
 let lastStretch = 0;
 canvas.addEventListener('pointermove', e => {
-  if (phase === 'aim' && aim.dragging) {
+  if (phase === 'aim' && runwayMode() && rw.holding) {
+    rw.yaw = clamp(rw.y0 - ((e.clientX - rw.sx) / pullMax()) * 0.5, -0.35, 0.35);
+  } else if (phase === 'aim' && aim.dragging) {
     const m = pullMax();
     const dx = e.clientX - aim.sx, dy = e.clientY - aim.sy;
     const prev = aim.power;
@@ -839,6 +855,7 @@ canvas.addEventListener('pointermove', e => {
   }
 });
 const endPointer = e => {
+  if (phase === 'aim' && runwayMode() && rw.holding) releaseRunway();
   if (phase === 'aim' && aim.dragging) { aim.dragging = false; fire(); }
   if (joy.active && e.pointerId === joy.id) { joy.active = false; joy.x = joy.y = 0; $('joy').classList.remove('on'); }
 };
@@ -853,15 +870,304 @@ window.addEventListener('keydown', e => {
   if (e.repeat) return;
   keys.add(e.code);
   initAudio();
-  if (phase === 'aim' && e.code === 'Space') { aim.keyCharge = true; aim.chargeDir = 1; aim.power = Math.max(aim.power, 0.15); hint('', 0); }
+  if (phase === 'aim' && runwayMode() && e.code === 'Space') { rw.holding = true; rw.started = true; hint('', 0); }
+  else if (phase === 'aim' && e.code === 'Space') { aim.keyCharge = true; aim.chargeDir = 1; aim.power = Math.max(aim.power, 0.15); hint('', 0); }
   if (e.code === 'KeyR' && (phase === 'fly' || phase === 'end')) { screen(null); startLevel(levelN); }
   if (e.code === 'Escape') { if (phase === 'fly') endFlight('crash'); else if (phase === 'aim') showTitle(); }
 });
 window.addEventListener('keyup', e => {
   keys.delete(e.code);
+  if (phase === 'aim' && runwayMode() && e.code === 'Space' && rw.holding) releaseRunway();
   if (phase === 'aim' && e.code === 'Space' && aim.keyCharge) { aim.keyCharge = false; fire(); }
 });
 window.addEventListener('blur', () => { keys.clear(); boostTouch = false; });
+
+/* ---------------- runway launch ---------------- */
+// An elevated runway behind the start line: hold to accelerate, let go in the green zone to rotate
+// steeply into the air (a "perfect takeoff"), or roll off the end at a shallow angle.
+const RW_LEN = 70, RW_ZONE = 16;
+const rw = { z: 0, x: 0, v: 0, yaw: 0, y0: 0, sx: 0, holding: false, started: false };
+let runway = null;
+const runwayMode = () => save.launch === 'runway';
+function buildRunway() {
+  if (runway) { scene.remove(runway.group); runway.group.traverse(o => o.geometry?.dispose()); }
+  let top = -Infinity;
+  for (let z = -2; z <= RW_LEN; z += 4) for (const x of [-3, 0, 3]) top = Math.max(top, LV.ground(x, z));
+  const y = Math.max(top + 1.4, LV.launchH + 1.4);
+  const g = new THREE.Group();
+  const M = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, ...o });
+  const box = (w, h, d, m, x, yy, z) => { const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); b.position.set(x, yy, z); b.castShadow = b.receiveShadow = true; g.add(b); return b; };
+  box(6, 0.5, RW_LEN, M(0x3b4150), 0, y - 0.25, RW_LEN / 2);
+  const white = M(0xf4f6fa), yellow = M(0xffc83a);
+  for (let z = RW_ZONE + 3; z < RW_LEN - 2; z += 5) box(0.22, 0.04, 2.4, white, 0, y + 0.01, z);
+  box(0.15, 0.04, RW_LEN, yellow, -2.8, y + 0.01, RW_LEN / 2);
+  box(0.15, 0.04, RW_LEN, yellow, 2.8, y + 0.01, RW_LEN / 2);
+  const zone = box(5.4, 0.04, RW_ZONE, M(0x4fc36a, { emissive: 0x2a8a3a, emissiveIntensity: 0.5 }), 0, y + 0.02, RW_ZONE / 2);
+  zone.castShadow = false;
+  box(6, 0.12, 0.5, M(0xe8374f), 0, y + 0.02, 0.25); // flat red edge line at the end of the deck
+  const pillar = M(0x8d96a5);
+  for (const z of [6, 24, 42, 60]) for (const x of [-2.4, 2.4]) {
+    const h = y - LV.ground(x, z);
+    if (h > 0.4) box(0.5, h, 0.5, pillar, x, y - h / 2, z);
+  }
+  scene.add(g);
+  runway = { group: g, y };
+}
+function syncLaunchMode() {
+  const r = runwayMode();
+  if (runway) runway.group.visible = r;
+  if (world) world.sling.group.visible = !r;
+  $('launchMode').textContent = r ? '🛫 Runway · tap for slingshot' : '🎯 Slingshot · tap for runway';
+}
+function resetRunway() {
+  Object.assign(rw, { z: RW_LEN - 5, x: 0, v: 0, yaw: 0, holding: false, started: false });
+  dots.visible = false;
+  placeOnRunway();
+}
+function placeOnRunway() {
+  plane.position.set(rw.x, runway.y - plane.userData.box.min.y * 0.9, rw.z);
+  plane.rotation.set(rw.v > 1 ? -0.015 : 0, rw.yaw, 0);
+}
+const rwMax = () => st.launch * 1.06;
+function stepRunway(dt, keySteer) {
+  if (keySteer) rw.yaw = clamp(rw.yaw + keySteer * dt * 0.5, -0.35, 0.35);
+  const vmax = rwMax(), a = (vmax * vmax) / (2 * (RW_LEN - 5 - RW_ZONE * 0.4));
+  if (rw.holding) rw.v = Math.min(vmax, rw.v + a * dt);
+  else rw.v = Math.max(0, rw.v - 2.5 * dt);
+  rw.x = clamp(rw.x - Math.sin(rw.yaw) * rw.v * dt, -2.3, 2.3);
+  rw.z -= Math.cos(rw.yaw) * rw.v * dt;
+  placeOnRunway();
+  setFlightSound(rw.v, false, rw.started, save.form === 'c172' || save.form === 'mq9');
+  const m = $('aimMeter');
+  m.classList.toggle('on', rw.started);
+  m.textContent = rw.z <= RW_ZONE ? `${Math.round(rw.v * 3.6)} km/h · LET GO!` : `${Math.round(rw.v * 3.6)} km/h · ${Math.round((rw.v / vmax) * 100)}%`;
+  if (rw.z <= 0) takeoff(false);
+}
+function releaseRunway() {
+  rw.holding = false;
+  if (rw.z <= RW_ZONE && rw.v > rwMax() * 0.55) takeoff(true);
+}
+function takeoff(perfect) {
+  $('aimMeter').classList.remove('on');
+  // leave the deck level: a perfect release keeps the nose flat with extra speed, otherwise it dips
+  const speed = rw.v * (perfect ? 1.1 : 1);
+  launchFlight(new THREE.Vector3(rw.x, plane.position.y, rw.z), speed, perfect ? 0 : -0.08, rw.yaw);
+  fs.perfectTakeoff = perfect;
+  if (perfect) { setTimeout(() => toast('🛫 PERFECT TAKEOFF'), 150); sfx.ring(0); buzz(30); }
+}
+$('launchMode').onclick = () => {
+  if (phase !== 'aim' || rw.started) return;
+  sfx.click();
+  save.launch = runwayMode() ? 'sling' : 'runway'; persist();
+  syncLaunchMode();
+  aim.power = 0; placeOnSling();
+  if (runwayMode()) resetRunway();
+  startLevel(levelN);
+};
+
+/* ---------------- garage: merge to evolve, earn while away ---------------- */
+const FORM_ICON = ['🛩️', '🛰️', '🛫', '🦅', '✈️', '🚀', '🛸'];
+const MAXF = FORMS.length - 1;
+const AWAY_CAP_MIN = 240; // the garage stops earning after 4 hours
+const rateOf = L => Math.round(2.4 ** L * 10) / 10; // coins per minute
+const garageRate = () => Math.round(save.garage.reduce((a, L) => a + (L >= 0 ? rateOf(L) : 0), 0) * 10) / 10;
+const bestForm = () => Math.max(0, ...save.forms.map(id => FORMS.findIndex(f => f.id === id)));
+const spawnLevel = () => Math.max(0, bestForm() - 3);
+const buyCost = () => Math.round(150 * 1.09 ** save.bought);
+function accrue() {
+  const now = Date.now(), r = garageRate();
+  const mins = clamp((now - save.garageT) / 60000, 0, AWAY_CAP_MIN);
+  save.bank = Math.min(r * AWAY_CAP_MIN, save.bank + r * mins);
+  save.garageT = now;
+}
+function collect() {
+  accrue();
+  const c = Math.floor(save.bank);
+  if (c <= 0) { sfx.deny(); return 0; }
+  save.bank -= c; save.coins += c; save.stats.earned += c;
+  persist(); sfx.mission();
+  return c;
+}
+let gSel = -1;
+function renderGarage(pop = -1) {
+  const g = $('garage');
+  g.innerHTML = '';
+  const selL = gSel >= 0 ? save.garage[gSel] : -2;
+  save.garage.forEach((L, i) => {
+    const d = document.createElement('div');
+    d.dataset.i = i;
+    d.className = `gt ${L >= 0 ? 'full lv' + L : ''} ${i === gSel ? 'sel' : ''} ${i !== gSel && L === selL && L < MAXF ? 'match' : ''} ${i === pop ? 'pop' : ''}`;
+    if (L >= 0) d.innerHTML = `<span class="lvb">${L + 1}</span><span class="e">${FORM_ICON[L]}</span><span class="n">${FORMS[L].name}</span><span class="rate">+${rateOf(L)}/m</span>`;
+    d.title = L >= 0 ? `${FORMS[L].name}: earns ${rateOf(L)} coins a minute` : 'Empty bay';
+    g.appendChild(d);
+  });
+  const free = save.garage.indexOf(-1), cost = buyCost(), b = $('gBuy');
+  b.textContent = free < 0 ? 'Garage full: merge!' : `Buy ${FORMS[spawnLevel()].name} · 🪙 ${fmt(cost)}`;
+  b.classList.toggle('poor', free < 0 || save.coins < cost);
+  $('gMerge').disabled = !findPair();
+  $('sCoins').textContent = fmt(save.coins);
+  updateCollect();
+}
+function updateCollect() { accrue(); $('gCollect').textContent = `🪙 ${fmt(Math.floor(save.bank))} · +${garageRate()}/min`; }
+setInterval(() => { if (phase === 'hangar') updateCollect(); }, 1000);
+function renderForms() {
+  const ev = $('evoChain');
+  ev.innerHTML = '';
+  FORMS.forEach((f, i) => {
+    const owned = save.forms.includes(f.id);
+    const b = document.createElement('button');
+    b.className = 'fm' + (save.form === f.id ? ' sel' : '');
+    b.disabled = !owned;
+    b.innerHTML = `<b>${FORM_ICON[i]} ${f.name}</b><span>${owned ? `glide ×${f.gr} · coins ×${f.coin}` : `🔒 merge 2 ${FORMS[i - 1].name}s`}</span>`;
+    b.title = f.blurb;
+    b.onclick = () => { if (save.form === f.id) return; sfx.click(); save.form = f.id; persist(); rebuildPreview(); renderShop(); };
+    ev.appendChild(b);
+  });
+}
+function findPair() {
+  for (let L = 0; L < MAXF; L++) {
+    const idx = save.garage.flatMap((v, i) => (v === L ? [i] : []));
+    if (idx.length >= 2) return [idx[0], idx[1]];
+  }
+  return null;
+}
+// merge bay a into bay b; returns the new form if this is the first time it was made
+function mergeInto(a, b) {
+  const L = save.garage[b] + 1;
+  save.garage[a] = -1; save.garage[b] = L;
+  save.stats.merges++;
+  const f = FORMS[L];
+  if (save.forms.includes(f.id)) return null;
+  save.forms.push(f.id);
+  if (L > FORMS.findIndex(q => q.id === save.form)) save.form = f.id; // never swap you into a weaker plane
+  return f;
+}
+function dropOn(a, b) {
+  const A = save.garage[a], B = save.garage[b];
+  if (A < 0 || a === b) return renderGarage();
+  accrue();
+  if (A === B && A < MAXF) {
+    const nf = mergeInto(a, b);
+    persist(); sfx.buy(); buzz(25);
+    renderGarage(b);
+    spawnBurst(plane.position, 0xffc83a, 16, 5);
+    if (nf) evolveScene(FORMS[FORMS.indexOf(nf) - 1], nf);
+  } else {
+    save.garage[b] = A; save.garage[a] = B;
+    persist(); sfx.click(); renderGarage(b);
+  }
+}
+function tapTile(i) {
+  if (gSel < 0) { if (save.garage[i] >= 0) { gSel = i; sfx.click(); } return renderGarage(); }
+  const a = gSel; gSel = -1;
+  if (a === i) return renderGarage();
+  dropOn(a, i);
+}
+let gDrag = null;
+$('garage').addEventListener('pointerdown', e => {
+  const t = e.target.closest('.gt');
+  if (t) gDrag = { i: +t.dataset.i, x: e.clientX, y: e.clientY, moved: false, el: t };
+});
+window.addEventListener('pointermove', e => {
+  if (gDrag && !gDrag.moved && save.garage[gDrag.i] >= 0 && Math.hypot(e.clientX - gDrag.x, e.clientY - gDrag.y) > 14) { gDrag.moved = true; gDrag.el.classList.add('drag'); }
+});
+window.addEventListener('pointerup', e => {
+  if (!gDrag) return;
+  const d = gDrag; gDrag = null;
+  if (!d.moved) return tapTile(d.i);
+  const el = document.elementFromPoint(e.clientX, e.clientY)?.closest('.gt');
+  gSel = -1;
+  if (el) dropOn(d.i, +el.dataset.i); else renderGarage();
+});
+window.addEventListener('pointercancel', () => { if (gDrag) { gDrag = null; renderGarage(); } });
+$('gBuy').onclick = () => {
+  initAudio();
+  const free = save.garage.indexOf(-1), cost = buyCost();
+  if (free < 0 || save.coins < cost) return sfx.deny();
+  accrue();
+  save.coins -= cost; save.bought++; save.garage[free] = spawnLevel();
+  persist(); sfx.buy();
+  gSel = -1; renderGarage(free);
+};
+$('gMerge').onclick = () => {
+  accrue();
+  let pair, newest = null, n = 0;
+  while ((pair = findPair())) { const nf = mergeInto(pair[0], pair[1]); if (nf && (!newest || FORMS.indexOf(nf) > FORMS.indexOf(newest))) newest = nf; n++; }
+  if (!n) return sfx.deny();
+  persist(); sfx.buy(); buzz(25); gSel = -1;
+  renderGarage();
+  toast(`⚡ ${n} merge${n > 1 ? 's' : ''}`);
+  if (newest) evolveScene(FORMS[FORMS.indexOf(newest) - 1], newest);
+};
+$('gCollect').onclick = () => { initAudio(); if (collect()) { spawnBurst(plane.position, 0xffd34a, 30, 7); renderShop(); } };
+
+/* ---------------- evolution moment ---------------- */
+let evoT = 0;
+function evolveScene(from, to) {
+  rebuildPreview();
+  evoT = 0.001;
+  plane.scale.setScalar(0.01);
+  const i = FORMS.indexOf(to);
+  $('evoName').textContent = `${FORM_ICON[i]} ${to.name}`;
+  $('evoFrom').textContent = `${from.name} → ${to.name}. ${to.blurb}`;
+  $('evoStats').textContent = `glide ×${to.gr} · launch ×${to.launch} · rocket ×${to.thrust} · coins ×${to.coin}`;
+  const fl = $('flash'); fl.classList.remove('go'); void fl.offsetWidth; fl.classList.add('go');
+  $('shop').classList.remove('show');
+  $('evo').classList.add('show');
+  sfx.evolve(); buzz([40, 60, 40, 60, 140]);
+  [0x3d8bff, 0xa35cff, 0xffc83a, 0xffffff].forEach((c, k) => setTimeout(() => spawnBurst(plane.position, c, 40, 8 + k * 2), 350 + k * 260));
+  setTimeout(() => sfx.win(), 900);
+}
+$('evoOk').onclick = () => {
+  sfx.click();
+  $('evo').classList.remove('show');
+  evoT = 0; plane.scale.setScalar(1); plane.rotation.set(0, 0, 0);
+  screen('shop'); renderShop();
+};
+
+/* ---------------- reward cards after each flight ---------------- */
+function dealCards() {
+  const el = $('rCards');
+  el.innerHTML = '';
+  if (endInfo.dist < 20) { $('rPick').style.display = 'none'; return; }
+  $('rPick').style.display = '';
+  // free tiers only up to a cap that rises as you clear levels, so coins still matter
+  const cap = Math.min(MAX_TIER, 2 + Math.floor(save.cleared / 2));
+  const ups = UPGRADES.filter(u => save.up[u.id] < cap).sort(() => Math.random() - 0.5);
+  const pouch = Math.round((25 + 18 * Math.min(levelN, 14)) * (0.8 + Math.random() * 0.6));
+  const deck = ups.slice(0, 2).map(u => ({ kind: 'up', u }));
+  if (deck.length === 2 && Math.random() < 0.3) deck[1] = { kind: 'boost' };
+  deck.push({ kind: 'coin', n: pouch });
+  while (deck.length < 3) deck.push(deck.some(c => c.kind === 'boost') ? { kind: 'coin', n: Math.round(pouch * 1.6) } : { kind: 'boost' });
+  deck.sort(() => Math.random() - 0.5);
+  deck.forEach(c => {
+    const b = document.createElement('button');
+    if (c.kind === 'up') { b.className = 'pc rare'; b.innerHTML = `<i class="i">${c.u.icon}</i><b>${c.u.name} +1</b><span>Free tier ${save.up[c.u.id] + 1}</span>`; }
+    else if (c.kind === 'coin') { b.className = 'pc coin'; b.innerHTML = `<i class="i">🪙</i><b>+${fmt(c.n)} coins</b><span>Coin pouch</span>`; }
+    else { b.className = 'pc'; b.innerHTML = `<i class="i">⚡</i><b>Lucky flight</b><span>Next flight ×1.5 coins</span>`; }
+    b.onclick = () => {
+      if (c.kind === 'up') save.up[c.u.id]++;
+      else if (c.kind === 'coin') { save.coins += c.n; save.stats.earned += c.n; }
+      else save.boost = 1.5;
+      persist(); sfx.buy();
+      [...el.children].forEach(x => { x.disabled = true; x.classList.add(x === b ? 'taken' : 'gone'); });
+    };
+    el.appendChild(b);
+  });
+}
+
+/* ---------------- away earnings ---------------- */
+function checkAway() {
+  const away = Date.now() - save.garageT;
+  accrue(); persist();
+  const n = Math.floor(save.bank);
+  if (away < 3 * 60000 || n < 10) return;
+  const mins = Math.min(AWAY_CAP_MIN, Math.floor(away / 60000));
+  const h = Math.floor(mins / 60), m = mins % 60;
+  $('awayTxt').innerHTML = `Your garage planes earned <b>🪙 ${fmt(n)}</b> over ${h ? h + 'h ' : ''}${m}m (+${garageRate()} a minute). The garage earns for up to 4 hours while you're away.`;
+  $('away').classList.add('show');
+}
+$('awayGo').onclick = () => { initAudio(); collect(); $('away').classList.remove('show'); if (phase === 'title') showTitle(); };
 
 /* ---------------- mobile helpers ---------------- */
 function showJoy(x, y, dx, dy) {
@@ -951,6 +1257,7 @@ function badge(on) { const b = $('dxrBadge'); b.textContent = on ? 'DisplayXR 3D
   await loadAll((d, n) => { $('loadBar').style.width = `${(d / n) * 100}%`; });
   loadLevel(Math.min(save.cleared, LEVEL_COUNT - 1));
   showTitle();
+  checkAway();
   requestAnimationFrame(monoFrame);
   startDisplayXR({
     THREE, renderer, scene, camera, canvas,
@@ -964,5 +1271,6 @@ if (DEBUG) window.__sw = {
   get phase() { return phase; }, get flight() { return flight; }, get level() { return LV; }, get fs() { return fs; }, save,
   start: n => startLevel(n), aim, fire, keys, endFlight, shop: showShop, persist,
   give: c => { save.coins += c; persist(); },
+  garage: () => save.garage, render: () => renderShop(), evolve: L => evolveScene(FORMS[L - 1], FORMS[L]), away: mins => { save.garageT -= mins * 60000; checkAway(); },
   maxAll: () => { UPGRADES.forEach(u => (save.up[u.id] = MAX_TIER)); persist(); },
 };

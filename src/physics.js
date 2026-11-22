@@ -28,12 +28,15 @@ export const TOTAL_TIERS = UPGRADES.length * MAX_TIER;
 
 // Evolution chain: each airframe needs enough upgrade tiers bought, plus coins.
 // Plane models are CC-BY (credited in the README). len = displayed length in metres.
+// Forms evolve by merging two of the previous form in the garage.
 export const FORMS = [
   { id: 'c172', name: 'Skipper', file: 'c172', need: 0, cost: 0, len: 3.2, gr: 1, launch: 1, thrust: 1, handling: 1, coin: 1, blurb: 'A trusty little trainer.' },
   { id: 'mq9', name: 'Drifter', file: 'mq9', need: 8, cost: 500, len: 3.2, gr: 1.15, launch: 1.05, thrust: 1.05, handling: 1, coin: 1.1, blurb: 'Long drone wings that never want to land.' },
   { id: 'citation2', name: 'Courier', file: 'citation2', need: 20, cost: 1600, len: 3.5, gr: 1.25, launch: 1.1, thrust: 1.2, handling: 1.1, coin: 1.2, blurb: 'A business jet with real thrust.' },
   { id: 'jet', name: 'Falcon', file: 'jet', need: 36, cost: 4200, len: 3.7, gr: 1.35, launch: 1.17, thrust: 1.4, handling: 1.2, coin: 1.35, blurb: 'Sleek, fast and hungry for rockets.' },
-  { id: 'b789', name: 'Jumbo', file: 'b789', need: 54, cost: 9500, len: 4.8, gr: 1.55, launch: 1.2, thrust: 1.6, handling: 0.95, coin: 1.6, blurb: 'The final form. Gigantic wings, gigantic payouts.' },
+  { id: 'b789', name: 'Jumbo', file: 'b789', need: 54, cost: 9500, len: 4.8, gr: 1.55, launch: 1.2, thrust: 1.6, handling: 0.95, coin: 1.6, blurb: 'Gigantic wings, gigantic payouts.' },
+  { id: 'rocket', name: 'Comet', path: 'parts/rocket2', orient: 'up', need: 0, cost: 0, len: 3.8, gr: 1.6, launch: 1.32, thrust: 2.0, handling: 1.2, coin: 2.0, blurb: 'Less plane, more rocket. Burns bright, flies far.' },
+  { id: 'ufo', name: 'Orbiter', path: 'planes/ufo', orient: 'flat', need: 0, cost: 0, len: 4.4, gr: 1.85, launch: 1.4, thrust: 2.3, handling: 1.45, coin: 2.6, blurb: 'The final form. Nobody knows how it flies.' },
 ];
 
 export function makeStats(up, formId) {

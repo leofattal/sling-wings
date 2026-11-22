@@ -48,6 +48,8 @@ Deploys to Vercel as a static Vite site (no config needed).
 
 ## Credits
 
+- Orbiter (UFO) model: "Ufo" by hat_my_guy, CC0 1.0, via [Poly Pizza](https://poly.pizza/m/NgURFR5T9m). The Comet form reuses the rocket part model.
+
 Planes are Sketchfab models under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). They have been modified: simplified, re-oriented and re-scaled. Details are in `public/models/planes/README.md`.
 - Cessna 172 by e737
 - Private Jet by Nick the Name
@@ -70,3 +72,10 @@ Scenery and pickups:
 These are all CC0; licenses are in `public/licenses/`.
 
 Glasses-free 3D: [DisplayXR](https://github.com/DisplayXR).
+
+## Garage, cards and runway
+
+- **Evolution garage:** buy planes and merge two of the same form to evolve them: Skipper → Drifter → Courier → Falcon → Jumbo → Comet → Orbiter. Making a form for the first time unlocks it and plays the evolution scene.
+- **Idle income:** every plane in the garage earns coins per minute, including while the game is closed (up to 4 hours).
+- **Reward cards:** after every flight of 20 m or more, pick 1 of 3: a free upgrade tier (capped by levels cleared), a coin pouch, or a lucky flight (next flight pays ×1.5).
+- **Runway launch:** toggle on the aim screen. Hold to accelerate down the runway and let go on the green zone for a perfect takeoff with extra speed; the plane leaves the deck level.

@@ -5,10 +5,13 @@ import { centred } from './assets.js';
 // Plane space: nose toward -Z, Y up. `box` is the plane model's bounding box.
 const RAMP = [0x9aa3ad, 0x4fc36a, 0x3d8bff, 0xa35cff, 0xffc83a]; // grey → green → blue → purple → gold
 export const tierColor = t => RAMP[Math.min(4, Math.max(0, Math.floor((t - 1) / 2)))];
-const WING_Y = { c172: 0.86, mq9: 0.5, citation2: 0.3, jet: 0.32, b789: 0.3 };
+const WING_Y = { c172: 0.86, mq9: 0.5, citation2: 0.3, jet: 0.32, b789: 0.3, rocket: 0.5, ufo: 0.45 };
+// high tiers glow, so a maxed part reads as special at a glance
+const GLOW = { [RAMP[3]]: 0.35, [RAMP[4]]: 0.6 };
 
 const mats = new Map();
 function mat(color, metal = 0.3, emissive = 0) {
+  emissive = emissive || GLOW[color] || 0;
   const key = color + ':' + metal + ':' + emissive;
   if (!mats.has(key)) mats.set(key, new THREE.MeshStandardMaterial({ color, metalness: metal, roughness: 0.4, emissive: emissive ? color : 0x000000, emissiveIntensity: emissive }));
   return mats.get(key);

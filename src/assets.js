@@ -19,7 +19,7 @@ const FILES = {
   p_rocket: 'parts/rocket2', p_pod: 'parts/rocket3', p_magnet: 'parts/magnet',
   p_wheel: 'parts/wheel-default', p_wheel2: 'parts/wheel-racing',
 };
-for (const p of FORMS) FILES['plane_' + p.id] = 'planes/' + p.file;
+for (const p of FORMS) FILES['plane_' + p.id] = p.path || 'planes/' + p.file;
 
 const store = {};
 const bboxes = {};
@@ -72,13 +72,23 @@ export function planeModel(id) {
   const name = 'plane_' + p.id;
   const bb = bboxes[name];
   const dim = bb.getSize(new THREE.Vector3());
-  const s = p.len / Math.max(dim.x, dim.z);
+  const s = p.len / (p.orient ? Math.max(dim.x, dim.y, dim.z) : Math.max(dim.x, dim.z));
   const inner = store[name].clone(true);
   inner.scale.setScalar(s);
+  // the saucer ships with a pure-black hull: repaint it silver and make its lights glow
+  if (p.id === 'ufo') inner.traverse(o => {
+    if (!o.isMesh) return;
+    const m = o.material.clone();
+    if (m.name === 'base') { m.color.set(0xc9d3de); m.metalness = 0.55; m.roughness = 0.3; }
+    else { m.emissive = m.color.clone(); m.emissiveIntensity = 0.9; }
+    o.material = m;
+  });
   const c = bb.getCenter(new THREE.Vector3());
   inner.position.set(-c.x * s, -c.y * s, -c.z * s);
   const turn = new THREE.Group();
-  turn.rotation.y = -Math.PI / 2;
+  // planes model their nose along -X; the rocket stands nose-up (+Y); the saucer is round
+  if (p.orient === 'up') turn.rotation.x = -Math.PI / 2;
+  else if (p.orient !== 'flat') turn.rotation.y = -Math.PI / 2;
   turn.add(inner);
   const wrap = new THREE.Group();
   wrap.add(turn);
