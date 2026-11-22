@@ -66,31 +66,42 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 // input: { pitch: -1..1 (+ = climb), steer: -1..1 (+ = right), boost: bool }
 // env:   { wind: {x,z}, updraft(x, y, z) -> m/s^2 upward }
+// Arcade glide, tuned so the plane flies a straight, shallow descent instead of bobbing up and down
+// (the old lift-proportional-to-v² model swapped speed for height back and forth).
+// The flight-path angle eases toward a target: the plane's glide slope, flatter when it's fast and
+// steeper when it's slow, plus whatever the pilot, the rocket or an updraft adds. Speed follows
+// energy (diving speeds you up, climbing slows you down) and settles at a cruise speed.
+export const GLIDE_BASE = 1.0; // multiplies the stats glide ratio (stock Skipper ≈ 4.6, about a 12° descent)
 export function stepFlight(s, input, st, dt, env) {
-  const kL = G / (TRIM * TRIM);
-  const kD = G / (st.gr * TRIM * TRIM);
   const v = Math.max(s.v, 3);
 
   const bankT = -clamp(input.steer, -1, 1) * st.bank;
   s.bank += (bankT - s.bank) * Math.min(1, dt * st.roll);
   const cb = Math.cos(s.bank);
 
-  const cmd = (1 + 1.15 * clamp(input.pitch, -1, 1) * st.pitchGain) / (0.35 + 0.65 * cb);
-  const lift = clamp(kL * v * v * cmd, -1.5 * G, 3.5 * G);
-  const liftRatio = lift / Math.max(1e-3, kL * v * v);
-  // parasitic drag grows with v^2 (nose cone cuts it), induced drag with how hard you pull
-  const drag = kD * v * v * (0.55 * st.paras + 0.45 * liftRatio * liftRatio);
+  const ratio = (GLIDE_BASE * st.gr) / (0.55 * st.paras + 0.45);
+  const glide = -Math.atan(1 / ratio);
+  const VC = TRIM * 1.35; // cruise speed the glide settles at
+  const kD = (G * Math.sin(-glide)) / (VC * VC);
+  const slow = clamp(VC / v, 0.45, 2.4);
+
+  const pitch = clamp(input.pitch, -1, 1) * 0.42 * st.pitchGain;
+  let target = Math.max(-0.75, glide * slow * slow); // fast: flatter, slow: steeper
+  target += pitch > 0 ? pitch * clamp(v / VC, 0.25, 1.15) : pitch; // can't zoom-climb while slow
+  target -= (1 - cb) * 0.3; // banking costs a little height
 
   let thrust = 0;
   s.boosting = false;
-  if (input.boost && s.fuel > 0) { thrust = st.thrust; s.fuel = Math.max(0, s.fuel - dt); s.boosting = true; }
+  if (input.boost && s.fuel > 0) { thrust = st.thrust * 0.7; s.fuel = Math.max(0, s.fuel - dt); s.boosting = true; target += 0.1; }
 
   const up = env.updraft ? env.updraft(s.x, s.y, s.z) : 0;
-  const sg = Math.sin(s.gamma), cg = Math.cos(s.gamma);
+  if (up > 0) target += Math.atan(up / v) * 0.6;
 
-  s.v = v + (-G * sg - drag + thrust + up * sg) * dt;
-  s.gamma += ((lift * cb - G * cg + up * cg) / v) * dt;
-  s.psi += ((lift * Math.sin(s.bank)) / (v * Math.max(0.3, cg))) * dt;
+  s.gamma += (clamp(target, -1.2, 0.9) - s.gamma) * Math.min(1, dt * 2.6);
+  const pull = 1 + 0.5 * Math.max(0, input.pitch) * Math.max(0, input.pitch);
+  s.v = v + (-G * Math.sin(s.gamma) - kD * v * v * pull + thrust) * dt;
+  const lift = G * clamp((v / TRIM) ** 2, 0.6, 3);
+  s.psi += ((lift * Math.sin(s.bank)) / (v * Math.max(0.3, Math.cos(s.gamma)))) * dt;
   s.v = clamp(s.v, 3, 110);
   s.gamma = clamp(s.gamma, -1.35, 1.25);
   s.psi = clamp(s.psi, -1.4, 1.4); // never fly back toward the slingshot
